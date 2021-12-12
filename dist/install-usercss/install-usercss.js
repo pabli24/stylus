@@ -5,6 +5,7 @@
 /* global prefs */
 /* global preinit */
 /* global t */// localization.js
+/* global requireOrdered */// polyfill
 'use strict';
 
 let cm;
@@ -39,7 +40,7 @@ setTimeout(() => !cm && showSpinner($('#header')), 200);
   }
   const scriptsReady = requireOrdered(
     /* global CodeMirror */
-["/codemirror/base.js"] // codemirror-base
+    ["/codemirror/base.js"] // codemirror-base
   ).then(() => require([
     '/vendor/codemirror/keymap/emacs',
     '/vendor/codemirror/keymap/vim', // TODO: load conditionally

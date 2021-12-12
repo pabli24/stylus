@@ -57,5 +57,11 @@
   },
   "webExt": {
     "sourceDir": "dist"
-  }
+  },
+  "eslintIgnore": [
+    "dist/vendor/**",
+    "dist/vendor-overwrites/**",
+    "dist/chunks/*",
+    "dist/codemirror/*"
+  ]
 }

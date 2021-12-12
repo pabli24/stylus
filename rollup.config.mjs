@@ -1,19 +1,19 @@
-import cjs from "rollup-plugin-cjs-es";
-import resolve from "@rollup/plugin-node-resolve";
-import iife from "rollup-plugin-iife";
-import { terser } from "rollup-plugin-terser";
-import output from "rollup-plugin-write-output";
+import cjs from 'rollup-plugin-cjs-es';
+import resolve from '@rollup/plugin-node-resolve';
+import iife from 'rollup-plugin-iife';
+import {terser} from 'rollup-plugin-terser';
+import output from 'rollup-plugin-write-output';
 
 import escapeRe from 'escape-string-regexp';
 
 export default {
   input: {
-    "codemirror/base": "src/codemirror/base.mjs",
-    "codemirror/edit": "src/codemirror/edit.mjs"
+    'codemirror/base': 'src/codemirror/base.mjs',
+    'codemirror/edit': 'src/codemirror/edit.mjs',
   },
   output: {
-    dir: "dist",
-    chunkFileNames: 'chunks/[name]-[hash].js'
+    dir: 'dist',
+    chunkFileNames: 'chunks/[name]-[hash].js',
   },
   plugins: [
     resolve(),
@@ -24,17 +24,17 @@ export default {
       {
         test: /codemirror\/edit\.js/,
         target: 'dist/edit.html',
-        handle: (content, {htmlScripts}) => replaceLine(content, '<!-- codemirror-edit -->', htmlScripts)
+        handle: (content, {htmlScripts}) => replaceLine(content, '<!-- codemirror-edit -->', htmlScripts),
       },
       {
         test: /codemirror\/base\.js/,
         target: 'dist/install-usercss/install-usercss.js',
         handle: (content, {scripts}) => replaceLine(content, '// codemirror-base',
-          JSON.stringify(scripts.map(resolvePath('/install-usercss/install-usercss.js'))))
-      }
-    ])
+          JSON.stringify(scripts.map(resolvePath('/install-usercss/install-usercss.js')))),
+      },
+    ]),
   ],
-  preserveEntrySignatures: false
+  preserveEntrySignatures: false,
 };
 
 function resolvePath(base) {
@@ -46,5 +46,5 @@ function resolvePath(base) {
 }
 
 function replaceLine(content, marker, repl) {
-  return content.replace(new RegExp(`.*${escapeRe(marker)}`), `${repl} ${marker}`);
+  return content.replace(new RegExp(`\\S.*${escapeRe(marker)}`), `${repl} ${marker}`);
 }
