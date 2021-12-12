@@ -1,3 +1,4 @@
+import "./base.mjs";
 import "codemirror/mode/stylus/stylus.js";
 import "codemirror/addon/dialog/dialog.js";
 import "codemirror/addon/scroll/annotatescrollbar.js";

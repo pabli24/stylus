@@ -39,7 +39,7 @@ setTimeout(() => !cm && showSpinner($('#header')), 200);
   }
   const scriptsReady = requireOrdered(
     /* global CodeMirror */
-["/chunks/annotatescrollbar-ee1d33fa.js","/codemirror/base.js"] // codemirror-base
+["/chunks/base-696dd16f.js","/codemirror/base.js"] // codemirror-base
   ).then(() => require([
     '/vendor/codemirror/keymap/emacs',
     '/vendor/codemirror/keymap/vim', // TODO: load conditionally
