@@ -33,7 +33,8 @@ export default {
           JSON.stringify(scripts.map(resolvePath('/install-usercss/install-usercss.js'))))
       }
     ])
-  ]
+  ],
+  preserveEntrySignatures: false
 };
 
 function resolvePath(base) {

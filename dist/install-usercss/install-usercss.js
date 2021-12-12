@@ -39,7 +39,7 @@ setTimeout(() => !cm && showSpinner($('#header')), 200);
   }
   const scriptsReady = requireOrdered(
     /* global CodeMirror */
-["/chunks/base-696dd16f.js","/codemirror/base.js"] // codemirror-base
+["/codemirror/base.js"] // codemirror-base
   ).then(() => require([
     '/vendor/codemirror/keymap/emacs',
     '/vendor/codemirror/keymap/vim', // TODO: load conditionally
