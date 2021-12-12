@@ -238,3 +238,7 @@ overrides:
   - files: ["**/*worker*.js"]
     env:
       worker: true
+
+  - files: ["**/*.mjs"]
+    parserOptions:
+      sourceType: module

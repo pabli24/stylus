@@ -65,22 +65,22 @@ const files = {
 main().catch(console.error);
 
 async function main() {
-  fse.emptyDirSync('vendor');
+  fse.emptyDirSync('dist/vendor');
   for (const pkg in files) {
     console.log('\x1b[32m%s\x1b[0m', `Building ${pkg}...`);
     // other files
     const [fetched, copied] = await buildFiles(pkg, files[pkg]);
     // README
-    await fse.outputFile(`vendor/${pkg}/README.md`, generateReadme(pkg, fetched, copied));
+    await fse.outputFile(`dist/vendor/${pkg}/README.md`, generateReadme(pkg, fetched, copied));
     // LICENSE
     await copyLicense(pkg);
   }
   console.log('\x1b[32m%s\x1b[0m', 'updating codemirror themes list...');
-  await fse.outputFile('edit/codemirror-themes.js', await generateThemeList());
+  await fse.outputFile('dist/edit/codemirror-themes.js', await generateThemeList());
 }
 
 async function generateThemeList() {
-  const themes = (await fse.readdir('vendor/codemirror/theme'))
+  const themes = (await fse.readdir('dist/vendor/codemirror/theme'))
     .filter(name => name.endsWith('.css'))
     .map(name => name.replace('.css', ''))
     .sort();
@@ -98,13 +98,13 @@ async function generateThemeList() {
 
 async function copyLicense(pkg) {
   try {
-    await fse.access(`vendor/${pkg}/LICENSE`);
+    await fse.access(`dist/vendor/${pkg}/LICENSE`);
     return;
   } catch (err) {
     // pass
   }
   for (const file of await glob(`node_modules/${pkg}/LICEN[SC]E*`)) {
-    await fse.copy(file, `vendor/${pkg}/LICENSE`);
+    await fse.copy(file, `dist/vendor/${pkg}/LICENSE`);
     return;
   }
   throw new Error(`cannot find license file for ${pkg}`);
@@ -118,15 +118,15 @@ async function buildFiles(pkg, patterns) {
     const [src, dest] = pattern.split(/\s*→\s*/);
     if (src.startsWith('http')) {
       const content = await (await fetch(src)).text();
-      await fse.outputFile(`vendor/${pkg}/${dest}`, content);
+      await fse.outputFile(`dist/vendor/${pkg}/${dest}`, content);
       fetchedFiles.push([src, dest]);
     } else {
       let dirty = false;
       for (const file of await glob(`node_modules/${pkg}/${src}`)) {
         if (dest) {
-          await fse.copy(file, `vendor/${pkg}/${dest}`);
+          await fse.copy(file, `dist/vendor/${pkg}/${dest}`);
         } else {
-          await fse.copy(file, path.join('vendor', path.relative('node_modules', file)));
+          await fse.copy(file, path.join('dist/vendor', path.relative('node_modules', file)));
         }
         copiedFiles.push([path.relative(`node_modules/${pkg}`, file), dest]);
         dirty = true;

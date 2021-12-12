@@ -100,6 +100,12 @@
     return all[0];
   };
 
+  window.requireOrdered = async ids => {
+    for (const id of ids) {
+      await require([id]);
+    }
+  };
+
   if (!(new URLSearchParams({foo: 1})).get('foo')) {
     // TODO: remove when minimum_chrome_version >= 61
     window.URLSearchParams = class extends URLSearchParams {

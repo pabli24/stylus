@@ -37,7 +37,7 @@ function createZip() {
     });
 
     archive.pipe(file);
-    archive.glob('**', {ignore});
+    archive.glob('dist/**', {ignore});
     archive.finalize();
   });
 }

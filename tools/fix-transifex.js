@@ -3,7 +3,7 @@
 const fs = require('fs');
 const fse = require('fs-extra');
 
-const DIR = '_locales/';
+const DIR = 'dist/_locales/';
 const RX_LNG_CODE = /^\w\w(_\w{2,3})?$/; // like `en` or `en_GB`
 
 const makeFileName = lng => `${DIR}${lng}/messages.json`;

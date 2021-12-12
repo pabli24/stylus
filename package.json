@@ -20,20 +20,29 @@
     "webext-launch-web-auth-flow": "^0.1.1"
   },
   "devDependencies": {
+    "@rollup/plugin-node-resolve": "^13.0.6",
     "archiver": "^4.0.1",
     "endent": "^1.4.0",
+    "escape-string-regexp": "^5.0.0",
     "eslint": "^7.20.0",
     "fs-extra": "^9.0.0",
     "make-fetch-happen": "^8.0.7",
+    "rollup": "^2.61.1",
+    "rollup-plugin-cjs-es": "^1.0.1",
+    "rollup-plugin-iife": "^0.5.0",
+    "rollup-plugin-terser": "^7.0.2",
+    "rollup-plugin-write-output": "^0.1.1",
     "sync-version": "^1.0.1",
     "tiny-glob": "^0.2.6",
     "web-ext": "^6.5.0"
   },
   "scripts": {
-    "lint": "eslint \"**/*.js\" --cache",
+    "lint": "eslint . --ext .js,.mjs --cache",
+    "lint-fix": "eslint . --ext .js,.mjs --fix",
     "test": "node tools/test.js && npm run lint",
     "update-locales": "tx pull --all && node tools/fix-transifex.js",
     "update-transifex": "tx push -s",
+    "build": "rollup -c",
     "build-vendor": "node tools/build-vendor",
     "zip": "npm test && node tools/zip.js",
     "start": "web-ext run",
@@ -44,5 +53,8 @@
   },
   "engines": {
     "node": ">=10.0.0"
+  },
+  "webExt": {
+    "sourceDir": "dist"
   }
 }

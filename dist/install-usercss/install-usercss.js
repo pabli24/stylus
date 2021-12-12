@@ -37,19 +37,12 @@ setTimeout(() => !cm && showSpinner($('#header')), 200);
   if (theme !== 'default') {
     require([`/vendor/codemirror/theme/${theme}.css`]); // not awaiting as it may be absent
   }
-  const scriptsReady = require([
-    '/vendor/codemirror/lib/codemirror', /* global CodeMirror */
-  ]).then(() => require([
-    '/vendor/codemirror/keymap/sublime',
+  const scriptsReady = requireOrdered(
+    /* global CodeMirror */
+["/chunks/annotatescrollbar-ee1d33fa.js","/codemirror/base.js"] // codemirror-base
+  ).then(() => require([
     '/vendor/codemirror/keymap/emacs',
     '/vendor/codemirror/keymap/vim', // TODO: load conditionally
-    '/vendor/codemirror/mode/css/css',
-    '/vendor/codemirror/addon/search/searchcursor',
-    '/vendor/codemirror/addon/fold/foldcode',
-    '/vendor/codemirror/addon/fold/foldgutter',
-    '/vendor/codemirror/addon/fold/brace-fold',
-    '/vendor/codemirror/addon/fold/indent-fold',
-    '/vendor/codemirror/addon/selection/active-line',
     '/vendor/codemirror/lib/codemirror.css',
     '/vendor/codemirror/addon/fold/foldgutter.css',
     '/js/cmpver', /* global compareVersion */

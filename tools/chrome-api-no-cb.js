@@ -5,7 +5,7 @@
 */
 'use strict';
 
-const manifest = require('../manifest.json');
+const manifest = require('../dist/manifest.json');
 const fetch = require('make-fetch-happen');
 
 (async () => {
