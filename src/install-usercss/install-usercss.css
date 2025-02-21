@@ -1,7 +1,6 @@
 body {
   overflow: hidden;
   display: flex;
-  height: 100vh;
 }
 
 img.icon {
@@ -106,9 +105,6 @@ textarea {
 }
 #live-reload-install-hint {
   color: darkcyan;
-}
-.w100 {
-  width: 100%;
 }
 
 .install {
@@ -252,7 +248,9 @@ li {
   border: none;
 }
 
-/* spinner-related */
+.settings > :nth-child(n + 2) {
+  margin-top: 1em;
+}
 
 #header {
   position: relative;
@@ -282,12 +280,11 @@ li {
 }
 
 .configure-usercss .i-config {
-  width: 20px;
-  height: 20px;
+  width: var(--icon-font-size);
+  height: var(--icon-font-size);
 }
 #message-box.config-dialog {
-  width: 0;
-  height: 0;
+  width: 0; /* prevents covering the entire page */
   background: none;
   > div {
     box-shadow: 5px 5px 50px rgba(0, 0, 0, 0.75); /* copied from message-box.css + darkened the color */
@@ -296,7 +293,7 @@ li {
 
 /************ reponsive layouts ************/
 
-@media (max-width: 850px) {
+@media screen and (max-width: 850px), compact {
   body {
     flex-direction: column;
   }
@@ -312,10 +309,6 @@ li {
     min-height: 300px;
   }
   #header-contents {
-    display: flex;
-    flex-wrap: wrap;
-    align-content: flex-start;
-    align-items: flex-start;
     > :not(.w100) {
       margin-right: 1rem;
     }
@@ -337,7 +330,7 @@ li {
   }
   #message-box.config-dialog > div {
     top: auto;
-    bottom: 3rem;
+    bottom: var(--gap);
   }
   h1 {
     flex-wrap: nowrap;
@@ -348,7 +341,7 @@ li {
   }
 }
 
-@media (min-width: 850px) {
+@media not (max-width: 850px), compact {
   #header {
     height: 100% !important; /* overrides user resize */
   }

@@ -1,6 +1,8 @@
-import {$, $$, $create, focusA11y, toggleDataset} from './dom';
+import {kHocused, kHocusedAttr} from '@/js/consts';
+import {notIncludedInArray} from '@/js/util';
+import {$create, $toggleDataset, cssFieldSizing} from './dom';
 import * as prefs from './prefs';
-import '/css/spinner.css';
+import '@/css/spinner.css';
 
 export let configDialog = async (...args) => (
   configDialog = (await import('./dlg/config-dialog')).default
@@ -11,6 +13,17 @@ export let messageBox = /*@__PURE__*/new Proxy({}, {
     messageBox = (await import('./dlg/message-box')).default
   )[key](...args),
 });
+
+/**
+ * Hocus-focus.
+ * Last event's focusedViaClick.
+ * Making the focus outline appear on keyboard tabbing, but not on mouse clicks.
+ */
+let lastHocus = false;
+export const closestHocused = el => el?.closest(`[${kHocusedAttr}]`);
+export const isHocused = el => el && kHocused in el.dataset;
+export const setLastHocus = (el, state) => el && $toggleDataset(el, kHocused, (lastHocus = state));
+export const setHocus = (el, state) => el && $toggleDataset(el, kHocused, state);
 
 /**
  * @param {HTMLElement} el
@@ -39,6 +52,21 @@ export function animateElement(el, cls = 'highlight', ...removeExtraClasses) {
     el.classList.add(cls);
   });
 }
+
+/**
+ * to avoid a full layout recalc due to changes on body/root
+ * we modify the closest focusable element (like input or button or anything with tabindex=0)
+ */
+export const closestFocusable = el => {
+  let labelSeen;
+  for (; el; el = el.parentElement) {
+    if (el.localName === 'label' && el.control && !labelSeen) {
+      el = el.control;
+      labelSeen = true;
+    }
+    if (el.tabIndex >= 0) return el;
+  }
+};
 
 export function getEventKeyName(e, letterAsCode) {
   const mods =
@@ -76,7 +104,7 @@ export function important(str) {
  * Switches to the next/previous keyboard-focusable element.
  * Doesn't check `visibility` or `display` via getComputedStyle for simplicity.
  * @param {HTMLElement} rootElement
- * @param {Number} step - for exmaple 1 or -1 (or 0 to focus the first focusable el in the box)
+ * @param {Number} step - for example 1 or -1 (or 0 to focus the first focusable el in the box)
  * @returns {HTMLElement|false|undefined} -
  *   HTMLElement: focus changed,
  *   false: focus unchanged,
@@ -93,7 +121,7 @@ export function moveFocus(rootElement, step) {
     if (!el.disabled && el.tabIndex >= 0 && el.getBoundingClientRect().width) {
       el.focus();
       // suppress focus outline when invoked via click
-      toggleDataset(el, 'focusedViaClick', focusA11y.lastFocusedViaClick);
+      setHocus(el, lastHocus);
       return activeEl !== el && el;
     }
   }
@@ -170,10 +198,9 @@ export function setupLivePrefs(ids) {
       const oldValue = getValue(el);
       const diff = !isSame(el, oldValue, value);
       const type = el.type;
-      if (type === 'select-one') {
-        if ((init || diff) && el.classList.contains('fit-width')) {
-          fitSelectBox(el, value, init); /* global fitSelectBox */
-        }
+      if (type === 'select-one'
+      && !cssFieldSizing && (init || diff) && el.classList.contains('fit-width')) {
+        fitSelectBox(el, value, init); /* global fitSelectBox */
       } else if (diff) {
         if (type === 'radio') {
           el.checked = value === oldValue;
@@ -224,7 +251,7 @@ export function waitForSelector(selector, {recur, stopOnDomReady = true} = {}) {
         }
       }).observe(document, {childList: true, subtree: true});
       function isMatching(n) {
-        return n.tagName && (n.matches(selector) || n.firstElementChild && $(selector, n));
+        return n.tagName && (n.matches(selector) || n.firstElementChild && n.$(selector));
       }
       function callRecur([m0, m1]) {
         // Checking addedNodes if only 1 MutationRecord to skip simple mutations quickly
@@ -238,8 +265,4 @@ export function waitForSelector(selector, {recur, stopOnDomReady = true} = {}) {
         }
       }
     });
-}
-
-function notIncludedInArray(val) {
-  return !this.includes(val);
 }

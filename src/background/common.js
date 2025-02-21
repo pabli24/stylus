@@ -1,24 +1,37 @@
-import {kResolve, kStateDB} from '/js/consts';
-import {CHROME} from '/js/ua';
-import {promiseWithResolve} from '/js/util';
-import {browserWindows} from '/js/util-webext';
-import {getDbProxy} from './db';
+import {k_busy, kResolve} from '@/js/consts';
+import {CHROME} from '@/js/ua';
+import {browserWindows} from '@/js/util-webext';
 
-export let bgBusy = promiseWithResolve();
 /** Minimal init for a wake-up event */
 export const bgPreInit = [];
 export const bgInit = [];
+/** @type {Map<string,Promise>} */
+export const clientDataJobs = __.MV3 && new Map();
 
-export const safeTimeout = __.ENTRY === 'sw'
-  ? (fn, delay, ...args) =>
-    setTimeout(safeTimeoutResolve, delay, fn, args,
-      __.KEEP_ALIVE(promiseWithResolve())[kResolve])
-  : setTimeout;
+/** Temporary storage for data needed elsewhere e.g. in a content script */
+export const dataHub = {
+  del: key => delete data[key],
+  get: key => data[key],
+  has: key => key in data,
+  pop: key => {
+    const val = data[key];
+    delete data[key];
+    return val;
+  },
+  set: (key, val) => {
+    data[key] = val;
+  },
+};
+const data = {__proto__: null};
 
-const safeTimeoutResolve = __.ENTRY === 'sw'
-  && ((fn, args, resolve) => resolve(fn(...args)));
-
-export const stateDB = __.MV3 && getDbProxy(kStateDB, {store: 'kv'});
+/** @type {Set<(isDark: boolean) => ?>} */
+export const onSchemeChange = new Set();
+/** @type {Set<(tabId: number, url: string, oldUrl?: string) => ?>} */
+export const onTabUrlChange = new Set();
+/** @type {Set<(tabId: number, frameId: number, port: chrome.runtime.Port) => ?>} */
+export const onUnload = new Set();
+/** @type {Set<(data: Object, type: 'committed'|'history'|'hash') => ?>} */
+export const onUrlChange = new Set();
 
 export const uuidIndex = Object.assign(new Map(), {
   custom: {},
@@ -38,5 +51,21 @@ export let isVivaldi = !!(browserWindows && CHROME) && (async () => {
   return isVivaldi;
 })();
 
-window._busy = bgBusy;
-bgBusy.then(() => (bgBusy = null));
+export let bgBusy = global[k_busy] = (_ =>
+  Object.assign(new Promise(cb => (_ = cb)), {[kResolve]: _})
+)();
+
+bgBusy.then(() => {
+  bgBusy = null;
+  delete global[k_busy];
+});
+
+if (__.DEBUG) {
+  global._bgPreInit = bgPreInit;
+  global._bgInit = bgInit;
+  bgPreInit.push = (...args) => {
+    const {stack} = new Error();
+    for (const a of args) if (a && typeof a === 'object') a._stack = stack;
+    return [].push.apply(bgPreInit, args);
+  };
+}

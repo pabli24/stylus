@@ -1,7 +1,7 @@
-import {$, $create, focusA11y} from '/js/dom';
-import {animateElement, moveFocus} from '/js/dom-util';
-import {t, tHTML} from '/js/localization';
-import {clamp} from '/js/util';
+import {$create} from '@/js/dom';
+import {animateElement, closestFocusable, moveFocus} from '@/js/dom-util';
+import {tHTML} from '@/js/localization';
+import {clamp, t} from '@/js/util';
 import './message-box.css';
 
 // TODO: convert this singleton mess so we can show many boxes at once
@@ -72,9 +72,9 @@ messageBox.show = ({
     onshow(messageBox.element);
   }
 
-  if (!$('#message-box-title').textContent) {
-    $('#message-box-title').hidden = true;
-    $('#message-box-close-icon').hidden = true;
+  if (!$id('message-box-title').textContent) {
+    $id('message-box-title').hidden = true;
+    $id('message-box-close-icon').hidden = true;
   }
 
   return new Promise(resolve => {
@@ -100,7 +100,7 @@ messageBox.show = ({
         }
         switch (key) {
           case 'Enter':
-            if (focusA11y.closest(target)) {
+            if (closestFocusable(target)) {
               return;
             }
             break;
@@ -162,21 +162,18 @@ messageBox.show = ({
     }
     const id = 'message-box';
     messageBox.element =
-      $create({id, className}, [
-        $create([
-          $create(`#${id}-title`, {onmousedown: messageBox.listeners.mouseDown}, title),
+      $create('div', {id, className}, [
+        $create('div', [
+          $create(`#${id}-title.ellipsis`, {onmousedown: messageBox.listeners.mouseDown}, title),
           $create(`#${id}-close-icon`, {onclick: messageBox.listeners.closeIcon},
             $create('i.i-close')),
           $create(`#${id}-contents`, tHTML(contents)),
-          $create(`#${id}-buttons`,
-            buttons.map((content, buttonIndex) => content &&
-              $create('button', Object.assign({
-                buttonIndex,
-                onclick: messageBox.listeners.button,
-              }, typeof content === 'object' && content), (
-                typeof content !== 'object' || content instanceof Node
-              ) && content)
-            ).filter(Boolean)),
+          $create(`#${id}-buttons`, buttons.filter(Boolean).map((btn, buttonIndex) => {
+            if (btn.localName !== 'button') btn = $create('button', btn);
+            btn.buttonIndex = buttonIndex;
+            btn.onclick ??= messageBox.listeners.button;
+            return btn;
+          })),
         ]),
       ]);
   }

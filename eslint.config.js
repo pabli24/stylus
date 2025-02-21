@@ -11,6 +11,8 @@ const SRC_GLOBALS = {
   __: false,
 };
 
+let v;
+
 module.exports = [
   //#region Global exclusions
   {
@@ -32,7 +34,7 @@ module.exports = [
       'arrow-spacing': [2, {before: true, after: true}],
       'block-scoped-var': [2],
       'brace-style': [2, '1tbs', {allowSingleLine: true}],
-      'camelcase': [2, {properties: 'never', ignoreGlobals: true}],
+      'camelcase': [2, {properties: 'never', ignoreGlobals: true, allow: ['^k_']}],
       'class-methods-use-this': [2],
       'comma-dangle': [2, {
         arrays: 'always-multiline',
@@ -47,7 +49,7 @@ module.exports = [
       'computed-property-spacing': [2, 'never'],
       'consistent-return': [0],
       'constructor-super': [2],
-      'curly': [2, 'multi-line'],
+      'curly': [0, 'multi-or-nest', 'consistent'],
       'default-case': [0],
       'dot-location': [2, 'property'],
       'dot-notation': [0],
@@ -185,7 +187,7 @@ module.exports = [
       'no-script-url': [2],
       'no-self-assign': [2, {props: true}],
       'no-self-compare': [2],
-      'no-sequences': [2],
+      'no-sequences': [2, {allowInParentheses: true}],
       'no-shadow-restricted-names': [2],
       'no-shadow': [2, {hoist: 'all'}],
       'no-spaced-func': [2],
@@ -276,26 +278,58 @@ module.exports = [
   },
   //#endregion
   //#region Tooling
-  {
-    files: ['tools/**/*.js', '*.js'],
+  v = {
+    files: ['tools/**/*.mjs', '*.mjs'],
     ignores: [SHIMS],
     languageOptions: {
       globals: globals.node,
       ecmaVersion: 2023, // nodejs 20 per https://compat-table.github.io/compat-table/es2016plus/
-      sourceType: 'commonjs',
+    },
+  },
+  {
+    ...v,
+    files: ['tools/**/*.js', '*.js'],
+    languageOptions: {...v.languageOptions, sourceType: 'commonjs'},
+  },
+  //#endregion
+  //#region SHIMS
+  {
+    files: [SHIMS],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        ...globals.es2024,
+      },
     },
   },
   //#endregion
   //#region SRC
   {
-    files: ['src/**/*.js', SHIMS],
+    files: ['src/**/*.js'],
     languageOptions: {
       ecmaVersion: 2024,
       globals: {
         ...globals.browser,
         ...SRC_GLOBALS,
+        $: false,
+        $$: false,
+        $id: false,
+        $root: false,
+        $rootCL: false,
+        $tag: false,
       },
       sourceType: 'module',
+    },
+  },
+  //#endregion
+  //#region SRC copied
+  {
+    files: ['src/content/install*.js'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+        ...SRC_GLOBALS,
+      },
     },
   },
   //#endregion

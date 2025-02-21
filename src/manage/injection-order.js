@@ -1,8 +1,8 @@
+import {$create, $createFragment} from '@/js/dom';
 import DraggableList from '@eight04/draggable-list';
-import {$create} from '/js/dom';
-import {messageBox} from '/js/dom-util';
-import {t} from '/js/localization';
-import {API} from '/js/msg';
+import {messageBox} from '@/js/dom-util';
+import {API} from '@/js/msg-api';
+import {t} from '@/js/util';
 
 export default async function InjectionOrder(show, el, selector) {
   if (!show) {
@@ -28,7 +28,7 @@ export default async function InjectionOrder(show, el, selector) {
   ]);
   await messageBox.show({
     title: t('styleInjectionOrder'),
-    contents: $create('fragment', Object.entries(groups).map(makeList)),
+    contents: $createFragment(Object.entries(groups).map(makeList)),
     className: 'center-dialog ' + selector.slice(1),
     blockScroll: true,
     buttons: [t('confirmClose')],
@@ -77,7 +77,7 @@ export default async function InjectionOrder(show, el, selector) {
       }
     });
     DraggableList(ol, {scrollContainer: ol});
-    return $create('section', {['data-' + type]: ''}, [
+    return $create(`section[data-${type}]`, [
       $create('header', t(`styleInjectionOrderHint${type === 'main' ? '' : '_' + type}`)),
       ol,
     ]);

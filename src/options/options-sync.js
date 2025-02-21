@@ -1,21 +1,26 @@
-import {$, $$, toggleDataset} from '/js/dom';
-import {t, template} from '/js/localization';
-import {API, onExtension} from '/js/msg';
-import {clientData} from '/js/prefs';
-import {capitalize} from '/js/util';
+import {$create, $toggleDataset} from '@/js/dom';
+import {template} from '@/js/localization';
+import {onMessage} from '@/js/msg';
+import {API} from '@/js/msg-api';
+import {clientData} from '@/js/prefs';
+import {connected, disconnected, DRIVE_NAMES, getStatusText} from '@/js/sync-util';
+import {t} from '@/js/util';
 
 (async () => {
   let {sync: status, syncOpts} = __.MV3 ? clientData : await clientData;
-  const elSync = $('.sync-options', template.body);
-  const elCloud = $('.cloud-name', elSync);
-  const elToggle = $('.connect', elSync);
-  const elSyncNow = $('.sync-now', elSync);
-  const elStatus = $('.sync-status', elSync);
-  const elLogin = $('.sync-login', elSync);
-  const elDriveOptions = $$('.drive-options', elSync);
-  const $$driveOptions = () => $$(`[data-drive=${elCloud.value}] [data-option]`, elSync);
+  const elSync = template.body.$('.sync-options');
+  const elCloud = elSync.$('.cloud-name');
+  const elToggle = elSync.$('.connect');
+  const elSyncNow = elSync.$('.sync-now');
+  const elStatus = elSync.$('.sync-status');
+  const elLogin = elSync.$('.sync-login');
+  const elDriveOptions = elSync.$$('.drive-options');
+  const $$driveOptions = () => elSync.$$(`[data-drive="${elCloud.value}"] [data-option]`);
+  elCloud.append(
+    ...Object.entries(DRIVE_NAMES).map(([id, name]) =>
+      $create('option', {value: id}, name)));
   updateButtons();
-  onExtension(e => {
+  onMessage.set(e => {
     if (e.method === 'syncStatusUpdate') {
       setStatus(e.status);
     }
@@ -50,45 +55,26 @@ import {capitalize} from '/js/util';
 
   async function updateButtons() {
     const state = status.state;
-    const STATES = status.STATES;
-    const isConnected = state === STATES.connected;
-    const off = state === STATES.disconnected;
-    const drv = status.currentDriveName;
+    const isConnected = state === connected;
+    const off = state === disconnected;
+    const drv = status.drive;
     if (drv) elCloud.value = drv;
     elCloud.disabled = !off;
     elToggle.disabled = status.syncing;
     elToggle.textContent = t(`optionsSync${off ? 'Connect' : 'Disconnect'}`);
     elToggle.dataset.cmd = off ? 'start' : 'stop';
     elSyncNow.disabled = !isConnected || status.syncing || !status.login;
-    elStatus.textContent = getStatusText();
+    elStatus.textContent = getStatusText(status, true);
     elLogin.hidden = !isConnected || status.login;
     for (const el of elDriveOptions) {
       el.hidden = el.dataset.drive !== elCloud.value;
       el.disabled = !off;
     }
-    toggleDataset(elSync, 'enabled', elCloud.value !== 'none');
+    $toggleDataset(elSync, 'enabled', elCloud.value !== 'none');
     syncOpts ??= await API.sync.getDriveOptions(elCloud.value);
     for (const el of $$driveOptions()) {
       el.value = syncOpts[el.dataset.option] || '';
     }
     syncOpts = null; // clearing the initial value from clientData so that next time API is called
-  }
-
-  function getStatusText() {
-    if (status.syncing) {
-      const {phase, loaded, total} = status.progress || {};
-      return phase
-        ? t(`optionsSyncStatus${capitalize(phase)}`, [loaded + 1, total], false) ||
-          `${phase} ${loaded} / ${total}`
-        : t('optionsSyncStatusSyncing');
-    }
-    const {state, errorMessage, STATES} = status;
-    if (errorMessage && (state === STATES.connected || state === STATES.disconnected)) {
-      return errorMessage;
-    }
-    if (state === STATES.connected && !status.login) {
-      return t('optionsSyncStatusRelogin');
-    }
-    return t(`optionsSyncStatus${capitalize(state)}`, null, false) || state;
   }
 })();

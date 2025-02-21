@@ -1,10 +1,11 @@
-import '/js/dom-init';
-import {$, $$} from '/js/dom';
-import {setupLivePrefs} from '/js/dom-util';
-import {t, tBody} from '/js/localization';
-import * as prefs from '/js/prefs';
-import {CHROME} from '/js/ua';
-import {sleep} from '/js/util';
+import '@/js/dom-init';
+import {$toggleDataset} from '@/js/dom';
+import {setupLivePrefs} from '@/js/dom-util';
+import {tBody} from '@/js/localization';
+import {onMessage} from '@/js/msg';
+import * as prefs from '@/js/prefs';
+import * as syncUtil from '@/js/sync-util';
+import {t} from '@/js/util';
 import {readBadFavs, showStyles} from './render';
 import * as router from './router';
 import * as sorter from './sorter';
@@ -15,37 +16,40 @@ import './manage-newui.css';
 tBody();
 
 (async () => {
-  const {badFavs, ids, styles} = __.MV3 ? prefs.clientData : await prefs.clientData;
-  init(badFavs);
+  const {badFavs, ids, styles, sync} = __.MV3 ? prefs.clientData : await prefs.clientData;
+  const rerenderNewUI = () => newUI.render();
+  setupLivePrefs();
+  newUI.render(true);
+  prefs.subscribe(newUI.ids.map(newUI.prefKeyForId), rerenderNewUI);
+  sorter.init();
+  router.update();
+  if (newUI.hasFavs()) readBadFavs(badFavs);
   showStyles(styles, ids);
-  // translate CSS manually
-  document.styleSheets[0].insertRule(
-    `:root {${[
-      'genericDisabledLabel',
-      'updateAllCheckSucceededSomeEdited',
-      'filteredStylesAllHidden',
-    ].map(id => `--${id}:"${CSS.escape(t(id))}";`).join('')
-    }}`);
-  if (!__.MV3 && CHROME >= 80 && CHROME <= 88) {
-    // Wrong checkboxes are randomly checked after going back in history, https://crbug.com/1138598
-    window.on('pagehide', () => {
-      $$('input[type=checkbox]').forEach((el, i) => (el.name = `bug${i}`));
-    });
-  }
-  await sleep();
+  initSyncButton(sync);
   import('./lazy-init');
 })();
 
-function init(badFavs) {
-  setupLivePrefs();
-  // newUI.readPrefs();
-  newUI.render(true);
-  prefs.subscribe(newUI.ids.map(newUI.prefKeyForId), () => newUI.render());
-  prefs.subscribe('newStyleAsUsercss', (key, val) => {
-    $('#add-style-label').textContent =
-      t(val ? 'optionsAdvancedNewStyleAsUsercss' : 'addStyleLabel');
-  }, true);
-  sorter.init();
-  router.update();
-  return newUI.hasFavs() && readBadFavs(badFavs);
+// translate CSS manually
+document.styleSheets[0].insertRule(
+  `:root {${[
+    'genericDisabledLabel',
+    'updateAllCheckSucceededSomeEdited',
+    'filteredStylesAllHidden',
+  ].map(id => `--${id}:"${CSS.escape(t(id))}";`).join('')
+  }}`);
+
+function initSyncButton(sync) {
+  const el = $id('sync-styles');
+  const elMsg = $('#backup p');
+  const render = val => {
+    const drive = syncUtil.DRIVE_NAMES[val.drive || prefs.__values['sync.enabled']];
+    const msg = drive ? syncUtil.getStatusText(val) : '';
+    el.title = t('optionsCustomizeSync');
+    $toggleDataset(el, 'cloud', drive);
+    elMsg.textContent = msg === syncUtil.pending || msg === syncUtil.connected ? '' : msg;
+  };
+  onMessage.set(e => {
+    if (e.method === 'syncStatusUpdate') render(e.status);
+  });
+  render(sync);
 }

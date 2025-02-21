@@ -1,6 +1,6 @@
-import {kAppUrlencoded, kContentType} from '/js/consts';
-import {uso, usoJson} from '/js/urls';
-import {tryJSONparse} from '/js/util';
+import {kAppUrlencoded, kContentType} from '@/js/consts';
+import {uso, usoJson} from '@/js/urls';
+import {tryJSONparse} from '@/js/util';
 
 /** @type {Record<string, {req: Promise, ports: Set<chrome.runtime.Port>}>} */
 const jobs = {};
@@ -54,6 +54,7 @@ async function doDownload(url, {
   headers,
   responseHeaders,
   port,
+  ...opts
 }, jobKey) {
   let abort, data, timer, usoVars;
   try {
@@ -71,8 +72,10 @@ async function doDownload(url, {
     /** @type {Response | XMLHttpRequest} */
     const resp = __.MV3
       ? await fetch(url, {
+        ...opts,
         body,
         method,
+        headers,
         signal: !timeout ? null : (
           abort = new AbortController(),
           timer = setTimeout(callAbort, timeout, abort, url),
@@ -110,7 +113,10 @@ async function doDownload(url, {
         resp.onload = () => resolve(resp.response);
       });
     } else if (port) {
-      data = await fetchWithProgress(resp, responseType, headers, jobKey);
+      data = '';
+      for await (const value of resp.body.pipeThrough(new TextDecoderStream()))
+        reportProgress(jobKey, [(data += value).length]);
+      // TODO: report total length when https://github.com/whatwg/fetch/issues/1358 is fixed
     } else {
       data = await resp[responseType === 'arraybuffer' ? 'arrayBuffer' : responseType]();
     }
@@ -167,43 +173,6 @@ function extractHeaders(src, headers) {
   return res;
 }
 
-/**
- * @param {Response} resp
- * @param {string} responseType
- * @param {Headers} headers
- * @param {string} jobKey
- */
-async function fetchWithProgress(resp, responseType, headers, jobKey) {
-  const chunks = [];
-  let loadedLength = 0;
-  let data;
-  for await (const value of resp.body) {
-    chunks.push(value);
-    loadedLength += value.length;
-    reportProgress(jobKey, [loadedLength]);
-    // TODO: report total length when https://github.com/whatwg/fetch/issues/1358 is fixed
-  }
-  if (chunks.length === 1) {
-    data = chunks[0];
-  } else {
-    data = new Uint8Array(loadedLength);
-    loadedLength = 0;
-    for (const c of chunks) {
-      data.set(c, loadedLength);
-      loadedLength += c.length;
-    }
-  }
-  if (responseType === 'blob') {
-    data = new Blob([data], {type: headers.get(kContentType)});
-  } else if (responseType === 'arraybuffer') {
-    data = data.buffer;
-  } else {
-    data = new TextDecoder().decode(data);
-    if (responseType === 'json') data = JSON.parse(data);
-  }
-  return data;
-}
-
 function reportProgress(jobKey, msg) {
-  jobs[jobKey].ports?.forEach(p => p.postMessage(msg));
+  jobs[jobKey]?.ports?.forEach(p => p.postMessage(msg));
 }

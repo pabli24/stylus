@@ -1,12 +1,15 @@
-import {$, $$, $create, focusA11y} from './dom';
-import {getEventKeyName, messageBox, moveFocus} from './dom-util';
+import {$create} from './dom';
+import {
+  closestFocusable, closestHocused, getEventKeyName, isHocused, messageBox, moveFocus, setHocus,
+  setLastHocus,
+} from './dom-util';
 import HeaderResizer from './header-resizer';
-import {t, tHTML} from './localization';
-import {onExtension} from './msg';
+import {tHTML} from './localization';
+import {onMessage} from './msg';
 import * as prefs from './prefs';
-import {CHROME} from './ua';
+import {CHROME, FIREFOX} from './ua';
 import {installUsercss} from './urls';
-import {clamp, debounce, tryURL} from './util';
+import {clamp, debounce, t, tryURL} from './util';
 
 const SPLIT_BTN_MENU = '.split-btn-menu';
 const tooltips = new WeakMap();
@@ -17,9 +20,9 @@ window.on('keydown', keepFocusRingOnTabbing, {passive: true});
 window.on('keypress', clickDummyLinkOnEnter);
 window.on('wheel', changeFocusedInputOnWheel, {capture: true, passive: false});
 window.on('click', splitMenu);
-window.on('click', interceptClick, true);
+window.on('click', showTooltipNote, true);
 window.on('resize', () => debounce(addTooltipsToEllipsized, 100));
-onExtension(request => {
+onMessage.set(request => {
   if (request.method === 'editDeleteText') {
     document.execCommand('delete');
   }
@@ -35,9 +38,9 @@ if (!CHROME || CHROME < 93) {
     }
   }
 }
-const elOff = $('#disableAll-label'); // won't hide if already shown
+const elOff = $id('disableAll-label'); // won't hide if already shown
 if (elOff) prefs.subscribe('disableAll', () => (elOff.dataset.persist = ''));
-if ($('#header')) HeaderResizer();
+if ($id('header')) HeaderResizer();
 
 const getFSH = DataTransferItem.prototype.getAsFileSystemHandle;
 if (getFSH) {
@@ -51,7 +54,6 @@ if (getFSH) {
     const dt = e.dataTransfer;
     const file = dt.files[0];
     if (file.type.includes('json')) {
-      document.body.ondrop(e);
       return;
     }
     if (!/\.(css|styl|less)$/i.test(file.name)) {
@@ -125,14 +127,8 @@ function clickDummyLinkOnEnter(e) {
 
 function keepFocusRingOnTabbing(event) {
   if (event.key === 'Tab' && !event.ctrlKey && !event.altKey && !event.metaKey) {
-    focusA11y.lastFocusedViaClick = false;
-    setTimeout(() => {
-      let el = document.activeElement;
-      if (el) {
-        el = el.closest('[data-focused-via-click]');
-        focusA11y.toggle(el, false);
-      }
-    });
+    setLastHocus(false);
+    setTimeout(() => setHocus(closestHocused(document.activeElement), false));
   }
 }
 
@@ -153,10 +149,13 @@ function splitMenu(event) {
   }
   if (pedal && pedal !== prevPedal) {
     const menu = $create(SPLIT_BTN_MENU,
+      {style: 'opacity:0'},
       Array.from(pedal.attributes, ({name, value}) =>
         name.startsWith('menu-') &&
         $create('a', {tabIndex: 0, __cmd: name.split('-').pop()}, value)
-      ));
+      ).filter(Boolean));
+    const wrapper = pedal.parentElement;
+    const xo = new IntersectionObserver(splitMenuIntersect);
     window.on('keydown', splitMenuEscape);
     menu.onfocusout = e => {
       if (!menu.contains(e.relatedTarget)) {
@@ -164,10 +163,14 @@ function splitMenu(event) {
       }
     };
     pedal.on('mousedown', e => e.preventDefault());
-    pedal.parentElement.classList.toggle('active');
+    wrapper.classList.toggle('active');
     pedal.after(menu);
     moveFocus(menu, 0);
-    focusA11y.toggle(menu.firstChild, focusA11y.get(pedal));
+    setHocus(menu.firstChild, isHocused(pedal));
+    xo.observe(menu);
+    if (__.BUILD !== 'chrome' && FIREFOX) // https://bugzil.la/1939973
+      for (let el = wrapper; (el = el.offsetParent) && el.tagName !== 'BODY';)
+        xo.observe(el);
   }
   if (entry) {
     prevPedal.previousElementSibling.dispatchEvent(new CustomEvent('split-btn', {
@@ -184,41 +187,54 @@ function splitMenuEscape(e) {
   }
 }
 
-function suppressFocusRingOnClick({target}) {
-  const el = focusA11y.closest(target);
-  if (el) {
-    focusA11y.lastFocusedViaClick = true;
-    focusA11y.toggle(el, true);
-  }
+/**
+ * @param {IntersectionObserverEntry[]} entries
+ * @param {IntersectionObserver} observer
+ */
+function splitMenuIntersect(entries, observer) {
+  observer.disconnect();
+  const menu = entries[0].target;
+  let width = 1e6;
+  let x, ir;
+  for ({intersectionRect: ir} of entries)
+    width = Math.min(width, ir.width - (x != null ? x : (x = ir.x, 0)));
+  x = width - entries[0].boundingClientRect.width;
+  if (x < 0) menu.style.transform = `translateX(calc(${x}px - var(--menu-pad)))`;
+  menu.style.opacity = '';
 }
 
-function interceptClick(event) {
-  const el = event.target.closest('[data-cmd=note]');
-  if (el) {
+function suppressFocusRingOnClick({target}) {
+  setLastHocus(closestFocusable(target), true);
+}
+
+function showTooltipNote(event) {
+  let note = event.target.closest('[data-cmd=note]');
+  if (note) {
     event.preventDefault();
+    note = tooltips.get(note) || note.title;
     messageBox.show({
       className: 'note center-dialog',
-      contents: tHTML(tooltips.get(el) || el.title),
+      contents: note.includes('<') ? tHTML(note) :
+        note.includes('\n') ? $create('div', note.split('\n').map(line => $create('p', line))) :
+          note,
       buttons: [t('confirmClose')],
     });
-  }
-  if (event.target.closest('.intercepts-click')) {
-    event.preventDefault();
   }
 }
 
 function splitLongTooltips() {
   for (const el of $$('[title]')) {
     tooltips.set(el, el.title);
-    el.title = el.title.replace(/\s*<\/?[^>]+>\s*/g, ' '); // strip html tags
+    // Strip html tags but allow <invalid-html-tags> which we use to emphasize stuff
+    el.title = el.title.replace(/(\n\s*)?<\/?[a-z]+[^>]*>(\n\s*)?/g, ' ');
     if (el.title.length < 50) {
       continue;
     }
     const newTitle = el.title
-      .split('\n')
+      .split(/\n+/)
       .map(s => s.replace(/([.?!]\s+|[．。？！]\s*|.{50,60},)\s+/gu, '$1\n'))
       .map(s => s.replace(/(.{50,80}(?=.{40,}))\s+/gu, '$1\n'))
-      .join('\n');
+      .join('\n\n');
     if (newTitle !== el.title) el.title = newTitle;
   }
 }

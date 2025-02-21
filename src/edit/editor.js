@@ -1,14 +1,14 @@
-import {$, $create} from '/js/dom';
-import {t} from '/js/localization';
-import * as prefs from '/js/prefs';
-import {clipString, debounce, deepEqual, mapObj, sessionStore} from '/js/util';
+import {$create} from '@/js/dom';
+import * as prefs from '@/js/prefs';
+import {clipString, debounce, deepEqual, mapObj, sessionStore, t} from '@/js/util';
+import {sticky} from './compact-header';
 import DirtyReporter from './dirty-reporter';
 
 const dirty = DirtyReporter();
-const mqCompact = matchMedia('(max-width: 850px)');
 /** @type {Set<HTMLInputElement>} */
 const regexps = new Set();
 const toc = [];
+toc.cls = 'current';
 
 let style;
 let wasDirty = false;
@@ -21,8 +21,7 @@ const editor = self.editor = {
   dirty,
   isUsercss: false,
   isWindowed: false,
-  livePreviewLazy: cb => debounce(cb, prefs.get('editor.livePreview.delay') * 1000),
-  mqCompact,
+  livePreviewLazy: cb => debounce(cb, prefs.__values['editor.livePreview.delay'] * 1000),
   /** @type {'customName'|'name'} */
   nameTarget: 'name',
   ppDemo: {
@@ -31,6 +30,7 @@ const editor = self.editor = {
   },
   regexps,
   saving: false,
+  /** @type {EditorScrollInfoContainer} */
   scrollInfo: {},
   get style() {
     return style;
@@ -38,6 +38,7 @@ const editor = self.editor = {
   set style(val) {
     style = val;
   },
+  toc,
 
   applyScrollInfo(cm, si = editor.scrollInfo.cms?.[0]) {
     if (si && si.sel) {
@@ -47,14 +48,17 @@ const editor = self.editor = {
       cm.setSelections(...si.sel, {scroll: false});
       Object.assign(cm.display.scroller, si.scroll); // for source editor
       Object.assign(cm.doc, si.scroll); // for sectioned editor
+      return si;
     }
   },
 
   cancel: () => location.assign('/manage.html'),
 
   makeScrollInfo() {
-    return {
+    return /** @namespace EditorScrollInfoContainer */ {
+      sticky,
       scrollY: window.scrollY,
+      /** @type {EditorScrollInfo[]} */
       cms: editor.getEditors().map(cm => /** @namespace EditorScrollInfo */({
         bookmarks: (cm.state.sublimeBookmarks || []).map(b => b.find()),
         focus: cm.hasFocus(),
@@ -62,6 +66,7 @@ const editor = self.editor = {
         parentHeight: cm.display.wrapper.parentElement.offsetHeight,
         scroll: mapObj(cm.doc, null, ['scrollLeft', 'scrollTop']),
         sel: [cm.doc.sel.ranges, cm.doc.sel.primIndex],
+        viewTo: cm.display.viewTo,
       })),
     };
   },
@@ -83,16 +88,16 @@ const editor = self.editor = {
       el.off('input', validateRegexp);
       if (regexps.delete(el) && !regexps.size) hide = true;
     }
-    if (hide != null) $('#testRE').hidden = hide;
+    if (hide != null) $id('testRE').hidden = hide;
   },
 
   toggleStyle(enabled = !style.enabled) {
-    $('#enabled').checked = enabled;
+    $id('enabled').checked = enabled;
     editor.updateEnabledness(enabled);
   },
 
   updateClass() {
-    $.rootCL.toggle('is-new-style', !editor.style.id);
+    $rootCL.toggle('is-new-style', !editor.style.id);
   },
 
   updateDirty() {
@@ -100,7 +105,7 @@ const editor = self.editor = {
     if (wasDirty !== isDirty) {
       wasDirty = isDirty;
       document.body.classList.toggle('dirty', isDirty);
-      $('#save-button').disabled = !isDirty;
+      $id('save-button').disabled = !isDirty;
     }
     editor.updateTitle();
   },
@@ -114,7 +119,7 @@ const editor = self.editor = {
   updateName(isUserInput) {
     if (!editor) return;
     if (isUserInput) {
-      const {value} = $('#name');
+      const {value} = $id('name');
       dirty.modify('name', style[editor.nameTarget] || style.name, value);
       style[editor.nameTarget] = value;
     }
@@ -133,9 +138,9 @@ const editor = self.editor = {
   updateToc(added) {
     const {sections} = editor;
     if (!toc.el) {
-      toc.el = $('#toc');
+      toc.el = $id('toc');
       toc.elDetails = toc.el.closest('details');
-      toc.title = $('#toc-title').dataset;
+      toc.title = $id('toc-title').dataset;
     }
     let num = 0;
     for (const sec of sections) num += !sec.removed;
@@ -171,8 +176,9 @@ const editor = self.editor = {
       toc.length--;
     }
     if (added.focus) {
-      const cls = 'current';
-      const old = $('.' + cls, toc.el);
+      toc.i = first;
+      const cls = toc.cls;
+      const old = toc.el.$('.' + cls);
       const el = elFirst || toc.el.children[first];
       if (old && old !== el) old.classList.remove(cls);
       el.classList.add(cls);
@@ -189,10 +195,6 @@ const editor = self.editor = {
     editor.updateMeta();
   },
 };
-
-function toggleCompact(mq) {
-  $.rootCL.toggle('compact-layout', mq.matches);
-}
 
 export function failRegexp(r) {
   try {
@@ -212,8 +214,5 @@ function validateRegexp({target: el}) {
     el.setCustomValidity(err);
   }
 }
-
-mqCompact.on('change', toggleCompact);
-toggleCompact(mqCompact);
 
 export default editor;

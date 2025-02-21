@@ -1,39 +1,19 @@
-import {kApplyPort} from '/js/consts';
-import {supported} from '/js/urls';
-import {ignoreChromeError} from '/js/util-webext';
-import {bgBusy, bgInit, stateDB} from './common';
-import {onUrlChange} from './navigation-manager';
+import {kApplyPort, kStyleIds, kUrl, pKeepAlive} from '@/js/consts';
+import {onDisconnect} from '@/js/msg';
+import * as prefs from '@/js/prefs';
+import {supported} from '@/js/urls';
+import {ignoreChromeError} from '@/js/util-webext';
+import {bgBusy, bgInit, onTabUrlChange, onUnload, onUrlChange} from './common';
+import {stateDB} from './db';
+import {kCommitted} from './navigation-manager';
 
-export const onUnload = new Set();
-export const onUrl = new Set();
-/** @typedef {{ url:string, styleIds: {[frameId:string]: number[]} }} StyleIdsFrameMap */
-/** @type {Map<number,{ url:string, styleIds: StyleIdsFrameMap }>} */
-const cache = new Map();
+const cache = {__proto__: null};
+export default cache;
 
 export const get = (tabId, ...keyPath) => {
-  let res = cache.get(tabId);
+  let res = cache[tabId];
   for (let i = 0; res && i < keyPath.length; i++) res = res[keyPath[i]];
   return res;
-};
-
-/** @return {StyleIdsFrameMap|false} */
-export const getStyleIds = id => cache.get(id)?.styleIds || false;
-
-/** @type {typeof Map.prototype.entries} */
-export const entries = /*@__PURE__*/cache.entries.bind(cache);
-
-/** @type {typeof Map.prototype.keys} */
-export const keys = /*@__PURE__*/cache.keys.bind(cache);
-
-export const load = async tabId => {
-  const oldVal = __.MV3 && await stateDB.get(tabId);
-  const val = oldVal || {
-    id: tabId,
-    url: (await browser.tabs.get(tabId).catch(ignoreChromeError))?.url,
-  };
-  cache.set(tabId, val);
-  if (__.MV3 && !oldVal) stateDB.put(val, tabId);
-  return val;
 };
 
 /**
@@ -45,72 +25,104 @@ export const set = (tabId, ...args) => {
   const value = args.pop();
   const lastKey = args.pop();
   const del = value === undefined;
-  let obj = cache.get(tabId);
+  let obj = cache[tabId];
   let obj0 = obj;
   if (!obj) {
     if (del) return;
-    cache.set(tabId, obj = obj0 = {});
+    cache[tabId] = obj = obj0 = {};
   }
   for (let i = 0, key; obj && i < args.length; i++) {
     obj = obj[key = args[i]] || !del && (obj[key] = {});
   }
   if (!del) obj[lastKey] = value;
   else if (obj) delete obj[lastKey];
-  if (__.MV3) {
-    obj0.id = tabId;
-    stateDB.put(obj0, tabId);
+  if (__.MV3 && bgMortal) stateDB.put(obj0, tabId);
+  return value;
+};
+
+export const someInjectable = () => {
+  for (let v in cache) {
+    v = cache[v];
+    if (v[kStyleIds] || (v = v[kUrl]) && supported(v[0])) {
+      return true;
+    }
   }
 };
 
 export const remove = tabId => {
-  cache.delete(tabId);
-  if (__.MV3) stateDB.delete(tabId);
+  delete cache[tabId];
+  if (__.MV3 && bgMortal) stateDB.delete(tabId);
 };
 
+const putObject = obj => stateDB.putMany(
+  Object.values(obj),
+  Object.keys(obj).map(Number)
+);
+
+export const bgMortalChanged = __.MV3 && new Set();
+let bgMortal;
+
 bgInit.push(async () => {
-  const [dbData, tabs] = await Promise.all([
-    __.MV3 ? stateDB.getAll(IDBKeyRange.bound(0, Number.MAX_SAFE_INTEGER)) : [],
+  const [saved, tabs] = await Promise.all([
+    __.MV3 && (bgMortal = prefs.__values[pKeepAlive] >= 0)
+      && stateDB.getAll(IDBKeyRange.bound(0, 1e99)),
     browser.tabs.query({}),
   ]);
-  const tabsObj = {};
-  const dbMap = new Map();
-  for (const val of dbData) dbMap.set(val.id, val);
-  for (const tab of tabs) tabsObj[tab.id] = tab;
+  let toPut;
   for (const {id, url} of tabs) {
-    if (supported(url)) {
-      let data = __.MV3 && dbMap.get(id);
-      if (!data ? data = {id} : data.url !== url) {
-        data.url = url;
-        if (__.MV3) stateDB.put(data, id);
-      }
-      cache.set(id, data);
+    let data;
+    if (!__.MV3 || !saved || !(data = saved[id]) || data[kUrl]?.[0] !== url) {
+      data = {[kUrl]: {0: url}};
+      if (__.MV3 && saved)
+        (toPut ??= {})[id] = data;
     }
+    cache[id] = data;
   }
   if (__.MV3) {
-    for (const key of dbMap.keys()) {
-      if (!cache.has(key)) stateDB.delete(key);
+    if (saved) {
+      let toDel;
+      for (const id in saved)
+        if (!cache[id])
+          (toDel ??= []).push(id);
+      if (toDel) stateDB.deleteMany(toDel);
+      if (toPut) putObject(toPut);
     }
+    prefs.subscribe(pKeepAlive, (key, val) => {
+      val = val >= 0;
+      if (bgMortal !== val) {
+        bgMortal = val;
+        if (val) putObject(cache);
+        else stateDB.delete(IDBKeyRange.bound(0, 1e99));
+        for (const fn of bgMortalChanged) fn(val);
+      }
+    });
   }
 });
 
 bgBusy.then(() => {
-  onUrlChange.add(({tabId, frameId, url}) => {
-    if (frameId) return;
+  onUrlChange.add(({tabId, frameId, url}, navType) => {
     let obj, oldUrl;
-    if ((obj = cache.get(tabId))) oldUrl = obj.url;
-    else cache.set(tabId, obj = {});
-    obj.id = tabId;
-    obj.url = url;
-    if (__.MV3) stateDB.put(obj, tabId);
-    for (const fn of onUrl) fn(tabId, url, oldUrl);
+    if ((obj = cache[tabId])) {
+      oldUrl = obj[kUrl]?.[0];
+      if (navType === kCommitted && obj[kStyleIds]) {
+        if (frameId) delete obj[kStyleIds][frameId];
+        else delete obj[kStyleIds];
+      }
+    } else {
+      cache[tabId] = obj = {};
+    }
+    if (navType === kCommitted && !frameId)
+      obj[kUrl] = {0: url};
+    else
+      (obj[kUrl] ??= {})[frameId] = url;
+    if (__.MV3 && bgMortal)
+      stateDB.put(obj, tabId);
+    if (frameId) return;
+    for (const fn of onTabUrlChange) fn(tabId, url, oldUrl);
   });
 });
 
-chrome.runtime.onConnect.addListener(port => {
-  if (port.name === kApplyPort) {
-    port.onDisconnect.addListener(onPortDisconnected);
-  }
-});
+onDisconnect[kApplyPort] = onPortDisconnected;
 
 // Wake up when a new empty is created to ensure the styles are preloaded
 chrome.tabs.onCreated.addListener(() => {});
@@ -121,12 +133,11 @@ chrome.tabs.onRemoved.addListener(async tabId => {
   for (const fn of onUnload) fn(tabId, 0);
 });
 
-async function onPortDisconnected(port) {
+function onPortDisconnected(port) {
   ignoreChromeError();
-  __.DEBUGLOG(port.sender);
-  if (bgBusy) await bgBusy;
   const {sender} = port;
   const tabId = sender.tab?.id;
   const frameId = sender.frameId;
+  if (!frameId) return; // ignoring unload of previous page while navigating to a new URL
   for (const fn of onUnload) fn(tabId, frameId, port);
 }

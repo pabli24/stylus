@@ -96,6 +96,10 @@
     "message": "To import the backup file, drag'n'drop it into this page or click the Import button.\n\nTo export a compatible backup for Stylus older than 1.5.18, right-click or shift-click the Export button.",
     "description": "Text for Backup section's (i) in style manager"
   },
+  "backupReminder": {
+    "message": "<b>Styles may be lost</b> due to power failure, bugs in the browser, personal mistake.<hr><b>Backup your data:</b> either configure \"Sync to cloud\" in the options or manually click the export button whenever you make significant changes or, preferably, set up automatic backup of all your data using a dedicated app.",
+    "description": "Shown in the style manager. Text between <b> and </b> is in bold font, <hr> is just an empty line in-between to make the text more readable."
+  },
   "bckpInstStyles": {
     "message": "Export styles"
   },
@@ -470,6 +474,14 @@
     "message": "Find styles",
     "description": "Text for a link that gets a list of styles for the current site"
   },
+  "findStylesOnline": {
+    "message": "Click to find styles online.",
+    "description": "Shown in the popup under \"No styles installed for this site.\""
+  },
+  "general": {
+    "message": "General",
+    "description": "Label of a section in UI that contains general/common/nonspecific stuff"
+  },
   "genericAdd": {
     "message": "Add",
     "description": "Used in various places for an action that adds something"
@@ -668,17 +680,9 @@
     "message": "Get styles",
     "description": "Help link text in style manager e.g. https://userstyles.org"
   },
-  "linkGetStylesInfo": {
-    "message": "This archive site was created by a userstyle community member to back up the slow and unresponsive userstyles.org. The archive updates its contents approximately once a day.",
-    "description": "Info shown when clicking the (i) icon of the uso-archive link in style manager"
-  },
   "linkGetShareStyles": {
     "message": "Get and share styles",
     "description": "Link text for https://userstyles.world/ in style manager"
-  },
-  "linkGetShareStylesInfo": {
-    "message": "The new community-driven userstyles.world site is created by userstyle authors in order to replace userstyles.org, which has been so slow and unresponsive for the past year that many authors stopped updating their styles.",
-    "description": "Info shown when clicking the (i) icon of the userstyles.world link in style manager"
   },
   "linkStylusWiki": {
     "message": "Wiki",
@@ -738,6 +742,10 @@
   "linterRulesLink": {
     "message": "See a full list of rules",
     "description": "Stylelint or CSSLint rules label added immediately before a link"
+  },
+  "liveReloadAfterInstall": {
+    "message": "Live reload after installation",
+    "description": "The alternative label of \"Live reload\" checkbox (liveReloadLabel translation key) for a style that wasn't installed yet"
   },
   "liveReloadError": {
     "message": "An error occurred while watching the file",
@@ -1075,6 +1083,9 @@
   "openOptions": {
     "message": "Options",
     "description": "Go to Options UI"
+  },
+  "optionCompactWidth": {
+    "message": "Max window width for compact UI layout (in pixels)"
   },
   "optionFOUC": {
     "message": "Styles applied too late?",
@@ -1783,12 +1794,6 @@
   },
   "styleExcludeLabel": {
     "message": "Custom excluded sites"
-  },
-  "syncDropboxDeprecated": {
-    "message": "Dropbox import/export is replaced by a more advanced style sync in the options page."
-  },
-  "syncDropboxStyles": {
-    "message": "Dropbox Export"
   },
   "syncError": {
     "message": "Sync failed",

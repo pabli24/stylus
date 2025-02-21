@@ -1,15 +1,17 @@
-import '/js/browser';
-import * as chromeSync from '/js/chrome-sync';
-import * as prefs from '/js/prefs';
-import {chromeLocal} from '/js/storage-util';
-import {fetchWebDAV, hasOwn} from '/js/util';
+import '@/js/browser';
+import * as chromeSync from '@/js/chrome-sync';
+import * as prefs from '@/js/prefs';
+import {chromeLocal} from '@/js/storage-util';
+import * as STATES from '@/js/sync-util';
+import {fetchWebDAV, hasOwn, t, tryURL} from '@/js/util';
 import {broadcastExtension} from './broadcast';
-import {uuidIndex} from './common';
+import {bgBusy, uuidIndex} from './common';
 import {db} from './db';
 import {cloudDrive, dbToCloud} from './db-to-cloud-broker';
 import {overrideBadge} from './icon-manager';
 import * as styleMan from './style-manager';
-import * as STATES from './sync-manager-states';
+import {onSaved} from './style-manager/fixer';
+import {getByUuid} from './style-manager/util';
 import {getToken, revokeToken} from './token-manager';
 
 export {getToken};
@@ -26,14 +28,8 @@ const SYNC_DELAY = 1;
 const SYNC_INTERVAL = 30;
 const STORAGE_KEY = 'sync/state/';
 const NO_LOGIN = ['webdav'];
-const status = /** @namespace SyncManager.Status */ {
-  STATES,
+const status = {
   state: STATES.pending,
-  syncing: false,
-  progress: null,
-  currentDriveName: null,
-  errorMessage: null,
-  login: false,
 };
 const compareRevision = (rev1, rev2) => rev1 - rev2;
 let lastError = null;
@@ -45,8 +41,11 @@ let resolveOnSync;
 let scheduling;
 let syncingNow;
 
-chrome.alarms.onAlarm.addListener(a => {
-  if (a.name === ALARM_ID) __.KEEP_ALIVE(syncNow());
+chrome.alarms.onAlarm.addListener(async a => {
+  if (a.name === ALARM_ID) {
+    if (bgBusy) await bgBusy;
+    __.KEEP_ALIVE(syncNow());
+  }
 });
 prefs.subscribe(PREF_ID, schedule, true);
 
@@ -60,9 +59,8 @@ export async function remove(...args) {
   return ctrl.delete(...args);
 }
 
-/** @returns {Promise<SyncManager.Status>} */
-export function getStatus() {
-  if (delayedInit) start(); // not awaiting (could be slow), we'll broadcast the updates
+export function getStatus(sneaky) {
+  if (delayedInit && !sneaky) start(); // not awaiting (could be slow), we'll broadcast the updates
   return status;
 }
 
@@ -90,12 +88,12 @@ export async function putDoc({_id, _rev}) {
 
 export async function setDriveOptions(driveName, options) {
   const key = `secure/sync/driveOptions/${driveName}`;
-  await chromeSync.setValue(key, options);
+  await chromeSync.set({[key]: options});
 }
 
 export async function getDriveOptions(driveName) {
   const key = `secure/sync/driveOptions/${driveName}`;
-  return await chromeSync.getValue(key) || {};
+  return (await chromeSync.get(key))[key] || {};
 }
 
 export async function start(name = delayedInit) {
@@ -105,11 +103,11 @@ export async function start(name = delayedInit) {
   if ((ctrl ??= initController()).then) ctrl = await ctrl;
   if (curDrive) return;
   curDriveName = name;
-  curDrive = getDrive(name); // preventing re-entry by assigning synchronously
+  curDrive = getDrive(name).catch(console.error); // preventing re-entry by assigning synchronously
   curDrive = await curDrive;
   ctrl.use(curDrive);
   status.state = STATES.connecting;
-  status.currentDriveName = curDriveName;
+  status.drive = curDriveName;
   emitStatusChange();
   if (isInit || NO_LOGIN.includes(curDriveName)) {
     status.login = true;
@@ -147,7 +145,7 @@ export async function stop() {
   curDrive = curDriveName = null;
   prefs.set(PREF_ID, 'none');
   status.state = STATES.disconnected;
-  status.currentDriveName = null;
+  status.drive = null;
   status.login = false;
   emitStatusChange();
 }
@@ -183,7 +181,7 @@ export async function syncNow() {
 
 function initController() {
   return dbToCloud({
-    onGet: _id => styleMan.uuid2style(_id) || uuidIndex.custom[_id],
+    onGet: _id => getByUuid(_id) || uuidIndex.custom[_id],
     async onPut(doc) {
       if (!doc) return; // TODO: delete it?
       const id = uuidIndex.get(doc._id);
@@ -199,7 +197,7 @@ function initController() {
         delete doc.id;
         if (id) doc.id = id;
         doc.id = await db.put(doc);
-        await styleMan.handleSave(doc, 'sync');
+        await onSaved(doc, 'sync');
       }
     },
     onDelete(_id, rev) {
@@ -231,7 +229,7 @@ function initController() {
       return chromeLocal.getValue(STORAGE_KEY + drive.name);
     },
     setState(drive, state) {
-      return chromeLocal.setValue(STORAGE_KEY + drive.name, state);
+      return chromeLocal.set({[STORAGE_KEY + drive.name]: state});
     },
     retryMaxAttempts: 10,
     retryExp: 1.2,
@@ -265,7 +263,7 @@ function getErrorBadge() {
       text: 'x',
       color: '#F00',
       title: !status.login ? 'syncErrorRelogin' : `${
-        chrome.i18n.getMessage('syncError')
+        t('syncError')
       }\n---------------------\n${
         // splitting to limit each line length
         lastError.message.replace(/.{60,}?\s(?=.{30,})/g, '$&\n')
@@ -278,6 +276,10 @@ async function getDrive(name) {
   if (!hasOwn(cloudDrive, name)) throw new Error(`Unknown cloud provider: ${name}`);
   const opts = await getDriveOptions(name);
   const webdav = name === 'webdav';
+  if (webdav && !tryURL(opts.url)) {
+    prefs.set(PREF_ID, 'none');
+    throw new Error('Broken options: WebDAV server URL is missing');
+  }
   if (!__.MV3 || !webdav) opts.getAccessToken = () => getToken(name);
   if (!__.MV3 && webdav) opts.fetch = fetchWebDAV.bind(opts);
   return cloudDrive[name](opts);

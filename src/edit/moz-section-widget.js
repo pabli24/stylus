@@ -1,12 +1,13 @@
-import colorMimicry from '/js/color/color-mimicry';
-import {$, $create} from '/js/dom';
-import {messageBox} from '/js/dom-util';
-import {t, template} from '/js/localization';
-import * as msg from '/js/msg';
-import {sleep} from '/js/util';
-import CodeMirror from 'codemirror';
+import colorMimicry from '@/js/color/color-mimicry';
+import {$create} from '@/js/dom';
+import {messageBox} from '@/js/dom-util';
+import {htmlToTemplate, templateCache} from '@/js/localization';
+import {onMessage} from '@/js/msg';
+import {sleep, t} from '@/js/util';
+import {CodeMirror} from '@/cm';
 import editor from './editor';
 import MozSectionFinder from './moz-section-finder';
+import {htmlAppliesTo} from './util';
 
 export default function MozSectionWidget(cm, finder = MozSectionFinder(cm)) {
   let TPL, EVENTS, CLICK_ROUTE;
@@ -47,13 +48,13 @@ export default function MozSectionWidget(cm, finder = MozSectionFinder(cm)) {
           $create('ul' + C_LIST),
         ]),
       listItem:
-        template.appliesTo.cloneNode(true),
+        (templateCache.appliesTo ??= htmlToTemplate(htmlAppliesTo)).cloneNode(true),
       appliesToEverything:
         $create('li.applies-to-everything', t('appliesToEverything')),
     };
 
-    $('[value=""]', TPL.listItem).remove();
-    Object.assign($(C_TYPE, TPL.listItem), hint);
+    TPL.listItem.$('[value=""]').remove();
+    Object.assign(TPL.listItem.$(C_TYPE), hint);
 
     CLICK_ROUTE = {
       /**
@@ -83,7 +84,7 @@ export default function MozSectionWidget(cm, finder = MozSectionFinder(cm)) {
         const pos = func.item.find(1);
         cm.replaceRange(`, ${func.str.type}("")`, pos, pos);
         await sleep();
-        $('input', elItem.nextElementSibling).focus();
+        elItem.nextElementSibling.$('input').focus();
       },
     };
 
@@ -124,10 +125,10 @@ export default function MozSectionWidget(cm, finder = MozSectionFinder(cm)) {
       },
     };
 
-    actualStyle = $create('style');
+    actualStyle = $tag('style');
 
     cm.on('optionChange', onCmOption);
-    msg.onExtension(onRuntimeMessage);
+    onMessage.set(onRuntimeMessage);
     if (finder.sections.length) {
       update(finder.sections, []);
     }
@@ -139,7 +140,7 @@ export default function MozSectionWidget(cm, finder = MozSectionFinder(cm)) {
   function destroy() {
     enabled = false;
     cm.off('optionChange', onCmOption);
-    msg.off(onRuntimeMessage);
+    onMessage.delete(onRuntimeMessage);
     actualStyle.remove();
     actualStyle = null;
     cm.operation(() => finder.sections.forEach(killWidget));
@@ -153,7 +154,7 @@ export default function MozSectionWidget(cm, finder = MozSectionFinder(cm)) {
   }
 
   function onRuntimeMessage(m) {
-    if (m.reason === 'editPreview' && !$(`#stylus-${m.style.id}`)) {
+    if (m.reason === 'editPreview' && !$id(`stylus-${m.style.id}`)) {
       // no style element with this id means the style doesn't apply to the editor URL
       return;
     }
@@ -216,7 +217,7 @@ export default function MozSectionWidget(cm, finder = MozSectionFinder(cm)) {
         transition: none;
       }
     `;
-    $.root.appendChild(actualStyle);
+    $root.appendChild(actualStyle);
   }
 
   /**
@@ -228,11 +229,12 @@ export default function MozSectionWidget(cm, finder = MozSectionFinder(cm)) {
     const isDelayed = added.isDelayed && (cm.startOperation(), true);
     const toDelay = [];
     const t0 = performance.now();
-    let {viewFrom, viewTo} = cm.display;
+    let viewTo = editor.viewTo || cm.display.viewTo;
     for (const sec of added) {
       const i = removed.findIndex(isReusableWidget, sec);
       const old = removed[i];
-      if (isDelayed || old || sec.end.line >= viewFrom && sec.start.line < viewTo) {
+      if (isDelayed || old
+      || sec.start.line < viewTo /* must add preceding ones to calc scrollTop*/) {
         renderWidget(sec, old);
         viewTo -= (sec.funcs.length || 1) * 1.25;
         if (old) removed[i] = null;
@@ -247,7 +249,7 @@ export default function MozSectionWidget(cm, finder = MozSectionFinder(cm)) {
     // renumber
     for (let i = Math.max(0, cutAt), {sections} = finder, sec; i < sections.length; i++) {
       if (!toDelay.includes(sec = sections[i])) {
-        const data = $(C_LABEL, sec.widget.node).dataset;
+        const data = sec.widget.node.$(C_LABEL).dataset;
         const di = `${i + 1}`;
         if (data.index !== di) data.index = di;
       }
@@ -310,7 +312,7 @@ export default function MozSectionWidget(cm, finder = MozSectionFinder(cm)) {
    */
   function renderContainer(sec, oldWidget) {
     const container = oldWidget ? oldWidget.node : TPL.container.cloneNode(true);
-    const elList = $(C_LIST, container);
+    const elList = container.$(C_LIST);
     const {funcs} = sec;
     const oldItems = elList[KEY] || false;
     const items = funcs.map((f, i) => renderFunc(f, oldItems[i]));
@@ -360,12 +362,12 @@ export default function MozSectionWidget(cm, finder = MozSectionFinder(cm)) {
       end = {line, ch: valueEnd.ch + Boolean(isQuoted) + 1},
     } = func;
     const el = old.item?.[KEY] || TPL.listItem.cloneNode(true);
-    const elVal = $(C_VALUE, el);
+    const elVal = el.$(C_VALUE);
     /** @namespace MarkedFunc */
     const res = el[KEY] = {
       str: {type, value},
       item: markFuncPart(start, end, old.item, el),
-      type: markFuncPart(start, typeEnd, old.type, $(C_TYPE, el), type, toLowerCase),
+      type: markFuncPart(start, typeEnd, old.type, el.$(C_TYPE), type, toLowerCase),
       value: markFuncPart(valuePos, valueEnd, old.value, elVal, value, fromDoubleslash),
     };
     if (el.dataset.type !== type) {

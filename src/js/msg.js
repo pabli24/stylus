@@ -1,62 +1,70 @@
-import {API, bgReadySignal} from './msg-api';
+import {k_busy, kBroadcast, kInvokeAPI} from '@/js/consts';
+import {bgReadySignal} from './msg-api';
 
-export {API};
+/** @type {Map<function,boolean>} true: returned value is used as the reply */
+export const onMessage = new Map();
+export const onConnect = {};
+export const onDisconnect = {};
+export const wrapData = data => ({
+  data,
+});
+export const wrapError = error => ({
+  error: Object.assign({
+    message: error.message || `${error}`,
+    stack: error.stack,
+  }, error), // passing custom properties e.g. `error.index`
+});
 
-const TARGETS = {
-  __proto: null,
-  all: ['both', 'tab', 'extension'],
-  extension: ['both', 'extension'],
-  tab: ['both', 'tab'],
-};
-const handler = {
-  both: new Set(),
-  tab: new Set(),
-  extension: new Set(),
-};
-// TODO: maybe move into browser.js and hook addListener to wrap/unwrap automatically
 chrome.runtime.onMessage.addListener(onRuntimeMessage);
-
-export function onMessage(fn) {
-  handler.both.add(fn);
+if (__.ENTRY) {
+  chrome.runtime.onConnect.addListener(async port => {
+    if (__.IS_BG && global[k_busy]) await global[k_busy];
+    const name = port.name.split(':', 1)[0];
+    const fnOn = onConnect[name];
+    const fnOff = onDisconnect[name];
+    if (fnOn) fnOn(port);
+    if (fnOff) port.onDisconnect.addListener(fnOff);
+  });
+}
+if (__.MV3 && !__.IS_BG) {
+  chrome.storage.session.onChanged.addListener(onStorage);
 }
 
-export function onTab(fn) {
-  handler.tab.add(fn);
-}
-
-export function onExtension(fn) {
-  handler.extension.add(fn);
-}
-
-export function off(fn) {
-  for (const type of TARGETS.all) {
-    handler[type].delete(fn);
-  }
-}
-
-export function _execute(target, ...args) {
+export function _execute(data, sender, multi) {
   let result;
-  for (const type of TARGETS[target] || TARGETS.all) {
-    for (const fn of handler[type]) {
-      let res;
+  let res;
+  let i = 0;
+  if (__.ENTRY !== 'sw' && multi) {
+    multi = data.length > 1 && data;
+    data = data[0];
+  }
+  do {
+    for (const [fn, replyAllowed] of onMessage) {
       try {
-        res = fn(...args);
+        res = fn(data, sender, !!multi);
       } catch (err) {
         res = Promise.reject(err);
       }
-      if (res !== undefined && result === undefined) {
+      if (replyAllowed && res !== result && result === undefined) {
         result = res;
       }
     }
-  }
-  return __.KEEP_ALIVE(result);
+  } while (__.ENTRY !== 'sw' && multi && (data = multi[++i]));
+  return result;
 }
 
-export function onRuntimeMessage({data, target}, sender, sendResponse) {
-  if (data.method === 'backgroundReady' && !__.IS_BG) {
+function onRuntimeMessage({data, multi, TDM}, sender, sendResponse) {
+  if (!__.MV3 && !__.IS_BG && data.method === 'backgroundReady') {
     bgReadySignal?.(true);
   }
-  const res = _execute(target, data, sender);
+  if (__.ENTRY === true && !__.IS_BG && data.method === kInvokeAPI) {
+    return;
+  }
+  sender.TDM = TDM;
+  let res = __.IS_BG && global[k_busy];
+  res = res
+    ? res.then(_execute.bind(null, data, sender, multi))
+    : _execute(data, sender, multi);
   if (res instanceof Promise) {
     res.then(wrapData, wrapError).then(sendResponse);
     return true;
@@ -64,15 +72,11 @@ export function onRuntimeMessage({data, target}, sender, sendResponse) {
   if (res !== undefined) sendResponse(wrapData(res));
 }
 
-function wrapData(data) {
-  return {data};
-}
-
-export function wrapError(error) {
-  return {
-    error: Object.assign({
-      message: error.message || `${error}`,
-      stack: error.stack,
-    }, error), // passing custom properties e.g. `error.index`
-  };
+async function onStorage(changes) {
+  if ((changes = changes[kBroadcast]) && (changes = changes.newValue)) {
+    if (document.visibilityState !== 'visible')
+      await new Promise(setTimeout);
+    changes.pop();
+    onRuntimeMessage({data: changes, multi: true}, {}, wrapData);
+  }
 }

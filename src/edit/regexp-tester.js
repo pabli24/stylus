@@ -1,10 +1,10 @@
-import '/js/browser';
-import {$create} from '/js/dom';
-import {t, template} from '/js/localization';
-import {API} from '/js/msg';
-import * as URLS from '/js/urls';
-import {tryRegExp} from '/js/util';
-import {MF_ICON} from '/js/util-webext';
+import '@/js/browser';
+import {$create} from '@/js/dom';
+import {template} from '@/js/localization';
+import {API} from '@/js/msg-api';
+import * as URLS from '@/js/urls';
+import {t, tryRegExp} from '@/js/util';
+import {MF_ICON} from '@/js/util-webext';
 import editor from './editor';
 import {helpPopup} from './util';
 import './regexp-tester.css';
@@ -134,19 +134,22 @@ async function update() {
     }
   }
   // render stats
-  const report = $create('div');
+  const report = $tag('div');
   for (const type in stats) {
     // top level groups: full, partial, none, invalid
     const {label, data} = stats[type];
     if (!data.length) {
       continue;
     }
-    const h3 = $create('h3', {'data-num': data.length}, label);
-    const block = report.appendChild(
-      $create('details', {
-        'data-type': type,
-        'open': !report.firstChild,
-      }, $create('summary', h3)));
+    const h3 = $tag('h3');
+    const block = $tag('details');
+    report.appendChild(block)
+      .appendChild($tag('summary'))
+      .appendChild(h3);
+    block.open = !report.firstChild;
+    block.dataset.type = type;
+    h3.textContent = label;
+    h3.dataset.num = data.length;
     // 2nd level: regexp text
     for (const {el, text, urls} of data) {
       if (urls) {

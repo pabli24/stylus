@@ -1,13 +1,12 @@
-import {getLZValue, LZ_KEY, setLZValue} from '/js/chrome-sync';
-import {UCD} from '/js/consts';
-import {$, $$remove, $create, $createLink, $isTextInput} from '/js/dom';
-import {messageBox} from '/js/dom-util';
-import {t} from '/js/localization';
-import {API} from '/js/msg';
-import * as prefs from '/js/prefs';
-import {styleToCss} from '/js/sections-util';
-import {RX_META} from '/js/util';
-import CodeMirror from 'codemirror';
+import {getLZValue, LZ_KEY, setLZValue} from '@/js/chrome-sync';
+import {UCD} from '@/js/consts';
+import {$$remove, $create, $createLink, $isTextInput} from '@/js/dom';
+import {messageBox} from '@/js/dom-util';
+import {API} from '@/js/msg-api';
+import * as prefs from '@/js/prefs';
+import {styleToCss} from '@/js/sections-util';
+import {RX_META, t} from '@/js/util';
+import {CodeMirror} from '@/cm';
 import cmFactory from './codemirror-factory';
 import editor, {failRegexp} from './editor';
 import * as linterMan from './linter';
@@ -28,18 +27,42 @@ export default function SourceEditor() {
   `.replace(/^\s+/gm, '');
   let savedGeneration;
   let prevMode = NaN;
+  let prevSel;
+  /** @type {MozSectionFinder} */
+  let sectionFinder;
+  let sectionWidget;
+  /** @type {MozSection[]} */
+  let mozSections;
+  let updateTocFocusPending;
 
   $$remove('.sectioned-only');
-  $('#header').on('wheel', headerOnScroll);
-  $('#sections').textContent = '';
-  $('#sections').appendChild($create('.single-editor'));
-  $('#save-button').on('split-btn', saveTemplate);
+  $id('header').on('wheel', headerOnScroll);
+  $id('sections').textContent = '';
+  $id('sections').appendChild($create('.single-editor'));
+  $id('save-button').on('split-btn', saveTemplate);
 
-  const cm = cmFactory.create($('.single-editor'));
-  const sectionFinder = MozSectionFinder(cm);
-  const sectionWidget = MozSectionWidget(cm, sectionFinder);
-  if (!style.id) setupNewStyle(editor.template);
-  createMetaCompiler(meta => {
+  const cmpPos = CodeMirror.cmpPos;
+  const cm = cmFactory.create($('.single-editor'), {
+    value: style.id ? style.sourceCode : setupNewStyle(editor.template),
+    finishInit(me) {
+      const kToc = 'editor.toc.expanded';
+      const kWidget = 'editor.appliesToLineWidget';
+      const si = editor.applyScrollInfo(me) || {};
+      editor.viewTo = si.viewTo;
+      sectionFinder = MozSectionFinder(me);
+      sectionWidget = MozSectionWidget(me, sectionFinder);
+      mozSections = editor.sections = sectionFinder.sections;
+      prevSel = me.doc.sel;
+      prefs.subscribe([kToc, kWidget], (k, val) => {
+        sectionFinder.onOff(updateToc, prefs.__values[kToc] || prefs.__values[kWidget]);
+        if (k === kWidget) sectionWidget.toggle(val);
+        if (k === kToc) me[val ? 'on' : 'off']('cursorActivity', onCursorActivity);
+      }, true);
+      Object.assign(me.curOp, si.scroll);
+      editor.viewTo = 0;
+    },
+  });
+  const metaCompiler = createMetaCompiler(meta => {
     const {vars} = style[UCD] || {};
     if (vars) {
       let v;
@@ -55,10 +78,11 @@ export default function SourceEditor() {
     updateMeta();
   });
   updateMeta();
+  // Subsribing outside of finishInit() because it uses `cm` that's still not initialized
+  prefs.subscribe('editor.linter', updateLinterSwitch, true);
 
   /** @namespace Editor */
   Object.assign(editor, {
-    sections: sectionFinder.sections,
     replaceStyle,
     updateLinterSwitch,
     updateLivePreview,
@@ -110,21 +134,11 @@ export default function SourceEditor() {
     scrollToEditor: () => {},
   });
 
-  prefs.subscribe('editor.linter', updateLinterSwitch, true);
-  prefs.subscribe('editor.appliesToLineWidget',
-    (k, val) => sectionWidget.toggle(val), true);
-  prefs.subscribe('editor.toc.expanded',
-    (k, val) => sectionFinder.onOff(editor.updateToc, val), true);
-
-  if (style.id) {
-    cm.setValue(style.sourceCode);
-    cm.clearHistory();
-    cm.markClean();
-  }
   savedGeneration = cm.changeGeneration();
-  cm.on('changes', () => {
+  cm.on('changes', (_, changes) => {
     dirty.modify('sourceGeneration', savedGeneration, cm.changeGeneration());
     editor.livePreviewLazy(updateLivePreview);
+    metaCompiler(changes);
   });
   cm.on('optionChange', (_cm, option) => {
     if (option !== 'mode') return;
@@ -138,7 +152,6 @@ export default function SourceEditor() {
   if (!$isTextInput(document.activeElement)) {
     cm.focus();
   }
-  editor.applyScrollInfo(cm); // WARNING! Place it after all cm.XXX calls that change scroll pos
 
   /** Shows the console.log output from the background worker stored in `log` property */
   function showLog(log) {
@@ -153,10 +166,10 @@ export default function SourceEditor() {
   }
 
   function updateLinterSwitch() {
-    const el = $('#editor.linter');
+    const el = $id('editor.linter');
     if (!el) return;
     el.value = getCurrentLinter();
-    const cssLintOption = $('[value="csslint"]', el);
+    const cssLintOption = el.$('[value="csslint"]');
     const mode = getModeName();
     if (mode !== 'css') {
       cssLintOption.disabled = true;
@@ -168,7 +181,7 @@ export default function SourceEditor() {
   }
 
   function getCurrentLinter() {
-    const name = prefs.get('editor.linter');
+    const name = prefs.__values['editor.linter'];
     if (cm.getOption('mode') !== 'css' && name === 'csslint') {
       return 'stylelint';
     }
@@ -178,30 +191,25 @@ export default function SourceEditor() {
   function setupNewStyle(tpl) {
     const comment = `/* ${t('usercssReplaceTemplateSectionBody')} */`;
     const sec0 = style.sections[0];
-    sec0.code = ' '.repeat(prefs.get('editor.tabSize')) + comment;
+    sec0.code = ' '.repeat(prefs.__values['editor.tabSize']) + comment;
     if (Object.keys(sec0).length === 1) { // the only key is 'code'
       sec0.domains = ['example.com'];
     }
-    style.sourceCode = (tpl || DEFAULT_TEMPLATE)
+    return (style.sourceCode = (tpl || DEFAULT_TEMPLATE)
       .replace(/(@name)(?:([\t\x20]+).*|\n)/, (_, k, space) => `${k}${space || ' '}${style.name}`)
       .replace(/\s*@-moz-document[^{]*{([^}]*)}\s*$/g, // stripping dummy sections
         (s, body) => body.trim() === comment ? '\n\n' : s)
       .trim() +
       '\n\n' +
-      styleToCss(style);
-    cm.startOperation();
-    cm.setValue(style.sourceCode);
-    cm.clearHistory();
-    cm.markClean();
-    cm.endOperation();
-    dirty.clear('sourceGeneration');
+      styleToCss(style)
+    );
   }
 
   function updateMeta() {
     const name = style.customName || style.name;
-    $('#name').value = name;
-    $('#enabled').checked = style.enabled;
-    $('#url').href = style.url;
+    $id('name').value = name;
+    $id('enabled').checked = style.enabled;
+    $id('url').href = style.url;
     editor.updateName();
     cm.setPreprocessor(style[UCD]?.preprocessor);
   }
@@ -292,16 +300,15 @@ export default function SourceEditor() {
     // ensure the data is ready in case the user wants to jump around a lot in a large style
     sectionFinder.keepAliveFor(nextPrevSection, 10e3);
     sectionFinder.updatePositions();
-    const {sections} = sectionFinder;
-    const num = sections.length;
+    const num = mozSections.length;
     if (!num) return;
     dir = dir < 0 ? -1 : 0;
     const pos = cm.getCursor();
-    let i = sections.findIndex(sec => CodeMirror.cmpPos(sec.start, pos) > Math.min(dir, 0));
-    if (i < 0 && (!dir || CodeMirror.cmpPos(sections[num - 1].start, pos) < 0)) {
+    let i = mozSections.findIndex(sec => CodeMirror.cmpPos(sec.start, pos) > Math.min(dir, 0));
+    if (i < 0 && (!dir || CodeMirror.cmpPos(mozSections[num - 1].start, pos) < 0)) {
       i = 0;
     }
-    cm.jumpToPos(sections[(i + dir + num) % num].start);
+    cm.jumpToPos(mozSections[(i + dir + num) % num].start);
   }
 
   function headerOnScroll({target, deltaY, deltaMode, shiftKey}) {
@@ -341,38 +348,99 @@ export default function SourceEditor() {
   }
 
   function createMetaCompiler(onUpdated) {
-    let meta = null;
-    let metaIndex = null;
-    let cache = [];
-    linterMan.register(async (text, options, _cm) => {
-      if (_cm !== cm) {
-        return;
+    let meta, iFrom, iTo, min, max;
+    let prevRes, busy, done;
+    linterMan.register(run);
+    return run;
+
+    async function run(text, options, cm2) {
+      if (cm2 && cm2 !== cm) return;
+      if (busy) return busy;
+      if (meta && !cm2) {
+        for (const change of /**@type{CodeMirror.EditorChange[]}*/text) {
+          const a = change.from;
+          const b = CodeMirror.changeEnd(change);
+          if (cmpPos(a, min) < 0 ? ((min = a), cmpPos(b, min) >= 0) : cmpPos(a, max) <= 0) {
+            if (cmpPos(b, max) > 0) max = b;
+            text = '';
+          }
+        }
+        // Exit if all changes are outside the metadata range
+        if (text) return;
+        /* Get the entire text because the current meta's ending may have been removed,
+           while another existing ending may be outside the changed range. */
+        text = cm.getValue();
+      }
+      // Comparing even if there are changes as the user may have typed the same text over
+      if (meta
+        && text.charCodeAt(iFrom) === meta.charCodeAt(iFrom)
+        && text.charCodeAt(iTo) === meta.charCodeAt(iTo)
+        && text.slice(iFrom, iTo + 1) === meta) {
+        return prevRes;
       }
       const match = text.match(RX_META);
       if (!match) {
         return [];
       }
-      if (match[0] === meta && match.index === metaIndex) {
-        return cache;
-      }
+      busy = new Promise(cb => (done = cb));
       const {metadata, errors} = await worker.metalint(match[0]);
       if (errors.every(err => err.code === 'unknownMeta')) {
         onUpdated(metadata);
       }
-      cache = errors.map(({code, index, args, message}) => {
+      meta = match[0];
+      iFrom = match.index; min = cm.posFromIndex(iFrom);
+      iTo = iFrom + meta.length - 1; max = cm.posFromIndex(iTo);
+      for (let i = 0; i < errors.length; i++) {
+        const {code, index, args, message} = errors[i];
         const isUnknownMeta = code === 'unknownMeta';
         const typo = isUnknownMeta && args[1] ? 'Typo' : ''; // args[1] may be present but undefined
-        return ({
-          from: cm.posFromIndex((index || 0) + match.index),
-          to: cm.posFromIndex((index || 0) + match.index),
+        errors[i] = {
+          from: cm.posFromIndex((index || 0) + i),
+          to: cm.posFromIndex((index || 0) + i),
           message: code && t(`meta_${code}${typo}`, args, false) || message,
           severity: isUnknownMeta ? 'warning' : 'error',
           rule: code,
-        });
-      });
-      meta = match[0];
-      metaIndex = match.index;
-      return cache;
-    });
+        };
+      }
+      prevRes = errors;
+      done(prevRes);
+      return prevRes;
+    }
+  }
+
+  function onCursorActivity() {
+    if (prevSel !== cm.doc.sel) {
+      prevSel = cm.doc.sel;
+      updateTocFocusPending ??= Promise.resolve().then(updateTocFocus);
+    }
+  }
+
+  function updateToc(...args) {
+    editor.updateToc(...args);
+    updateTocFocus();
+  }
+
+  function updateTocFocus() {
+    updateTocFocusPending = null;
+    const pos = prevSel.ranges[0].head;
+    const toc = editor.toc;
+    let end = mozSections.length;
+    let a = 0;
+    let b = end--;
+    let c = pos.line && Math.min(toc.i ?? (a + b) >> 1, end);
+    let c0, sec;
+    while (a < b && c0 !== c) {
+      sec = mozSections[c];
+      if (cmpPos(sec.start, pos) > 0)
+        b = c;
+      else if (c < end && cmpPos(mozSections[c + 1].start, pos) <= 0)
+        a = c;
+      else
+        return c !== toc.i && editor.updateToc({focus: true, 0: sec});
+      c0 = c;
+      c = (a + b) >> 1;
+    }
+    toc.el.$('.' + toc.cls)?.classList.remove(toc.cls);
+    toc.i = null;
   }
 }

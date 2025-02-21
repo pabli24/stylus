@@ -11,14 +11,13 @@ const {ROOT, MANIFEST} = require('./util');
 
 const DST = ROOT + 'dist/';
 const WEBPACK_CLI = 'webpack-cli --no-stats';
+const ANY = 'any-';
+const STRIP_RE = new RegExp(`^${ANY}`);
 const TARGETS = [
-  'firefox',
-  'chrome-mv2',
+  ANY + 'mv2',
   'chrome-mv3',
   'chrome-mv3-beta',
 ];
-
-fse.emptyDirSync(ROOT + 'node_modules/.cache/webpack');
 
 (async function build([targets] = process.argv.slice(2)) {
   // https://github.com/Stuk/jszip/issues/369
@@ -26,12 +25,12 @@ fse.emptyDirSync(ROOT + 'node_modules/.cache/webpack');
   JSZip.defaults.date = new Date(Date.now() - tzBug);
   targets = targets ? targets.split(',') : TARGETS;
   for (const target of targets) {
-    process.env.NODE_ENV = target + ':zip';
+    process.env.NODE_ENV = target.replace(STRIP_RE, '-') + ':zip';
     console.log(chalk.bgYellow.bold(`\nBuilding for ${target}...`));
     fse.emptyDirSync(DST);
     childProcess.execSync(WEBPACK_CLI, {stdio: 'inherit'});
     const mj = patchManifest(fs.readFileSync(DST + MANIFEST, 'utf8'), target);
-    const zipName = `stylus-${target}-${mj.version}.zip`;
+    const zipName = `stylus-${target.replace(STRIP_RE, '')}-${mj.version}.zip`;
     const zip = new JSZip();
     process.stdout.write(chalk.bold(`Creating ${zipName}...`));
     for (const e of glob.sync(DST + '**', {
@@ -55,8 +54,6 @@ fse.emptyDirSync(ROOT + 'node_modules/.cache/webpack');
 
 function patchManifest(str) {
   const mj = JSON.parse(str);
-  const i = mj.permissions.indexOf('declarativeNetRequestFeedback');
-  if (i >= 0) mj.permissions.splice(i, 1);
   delete mj.key;
   return mj;
 }

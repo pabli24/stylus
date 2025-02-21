@@ -1,8 +1,9 @@
-import {CodeMirror, loadCmTheme, THEME_KEY} from '/cm';
-import {rerouteHotkeys} from '/edit/util';
-import {CHROME} from '/js/ua';
+import {CodeMirror, loadCmTheme, THEME_KEY} from '@/cm';
+import {rerouteHotkeys} from '@/edit/util';
+import {kCodeMirror} from '@/js/consts';
+import {CHROME} from '@/js/ua';
 import editor from './editor';
-import * as prefs from '/js/prefs';
+import * as prefs from '@/js/prefs';
 
 /*
   All cm instances created by this module are collected so we can broadcast prefs
@@ -16,6 +17,11 @@ const cms = new Set();
 const cmDefaults = CodeMirror.defaults;
 const cmFactory = {
 
+  /**
+   * @param {HTMLElement | ((host: HTMLElement) => void)} place
+   * @param {CodeMirror.EditorConfiguration} [options]
+   * @return {CodeMirror.Editor & {doc: CodeMirror.Doc}}
+   */
   create(place, options) {
     const cm = CodeMirror(place, options);
     cm.display.lineDiv.on('mousewheel', plusMinusOnWheel.bind(cm), true);
@@ -73,7 +79,7 @@ const prefKeys = prefs.knownKeys.filter(k =>
 const {insertTab, insertSoftTab} = CodeMirror.commands;
 prefs.ready.then(() => {
   for (const key of prefKeys) {
-    cmDefaults[prefToCmOpt(key)] = prefs.get(key);
+    cmDefaults[prefToCmOpt(key)] = prefs.__values[key];
   }
   for (const [key, fn] of Object.entries({
     'editor.tabSize'(cm, value) {
@@ -96,7 +102,7 @@ prefs.ready.then(() => {
       cm.setOption('configureMouse', value ? configureMouseFn : null);
     },
   })) {
-    CodeMirror.defineOption(prefToCmOpt(key), prefs.get(key), fn);
+    CodeMirror.defineOption(prefToCmOpt(key), prefs.__values[key], fn);
     prefKeys.push(key);
   }
 });
@@ -128,7 +134,7 @@ const lazyOpt = {
     for (const e of entries) {
       const r = e.intersectionRatio && e.intersectionRect;
       if (!r) continue;
-      const cm = e.target.CodeMirror;
+      const cm = e.target[kCodeMirror];
       const data = Object.entries(queue.get(cm) || {});
       queue.delete(cm);
       observer.unobserve(e.target);
@@ -185,7 +191,7 @@ for (const cmd of [
   CodeMirror.commands[cmd] = (...args) => editor[cmd](...args);
 }
 
-function plusMinus(delta, cm, pos = cm.getCursor()) {
+function plusMinusOne(delta, cm, pos = cm.getCursor(), inOp) {
   const {line, ch} = pos;
   const {text} = cm.getLineHandle(line);
   let m = /[-+\d.%a-z]/iy;
@@ -200,16 +206,28 @@ function plusMinus(delta, cm, pos = cm.getCursor()) {
   m = m.exec(text);
   if (!m) return;
   if (m[0].includes('.')) delta /= 10;
+  inOp = inOp && (cm.curOp || (cm.startOperation(), true));
   cm.replaceRange((+m[0] + delta).toFixed(m[1] ? m[2].length : 0),
     {line, ch: i},
     {line, ch: i + m[0].length},
     '*incdec' + line + ':' + i);
+  return inOp;
+}
+
+function plusMinus(delta, cm) {
+  let op;
+  for (const /**@type{CodeMirror.Range}*/sel of cm.doc.sel.ranges) {
+    if (plusMinusOne(delta, cm, sel.head, !op))
+      op = true;
+  }
+  if (op === true)
+    cm.endOperation();
 }
 
 function plusMinusOnWheel(e) {
   if (e.altKey) {
     e.preventDefault();
-    plusMinus((e.ctrlKey ? 100 : e.shiftKey ? 10 : 1) * (e.wheelDeltaY > 0 ? 1 : -1), this,
+    plusMinusOne((e.ctrlKey ? 100 : e.shiftKey ? 10 : 1) * (e.wheelDeltaY > 0 ? 1 : -1), this,
       this.coordsChar({left: e.clientX, top: e.clientY}, 'window'));
   }
 }

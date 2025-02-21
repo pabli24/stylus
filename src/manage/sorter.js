@@ -1,9 +1,8 @@
-import {UCD} from '/js/consts';
-import {$, $create, dom} from '/js/dom';
-import {messageBox} from '/js/dom-util';
-import {t} from '/js/localization';
-import {installed} from '/manage/util';
-import * as prefs from '/js/prefs';
+import {UCD} from '@/js/consts';
+import {dom} from '@/js/dom';
+import * as prefs from '@/js/prefs';
+import {t} from '@/js/util';
+import {installed} from './util';
 
 const COL_MIN = 300; // same as options.html
 const COL_MAX = 9999; // same as options.html
@@ -71,24 +70,23 @@ const selectOptions = [
 ];
 const splitRegex = /\s*,\s*/;
 const ID = 'manage.newUI.sort';
-const getPref = () => prefs.get(ID) || prefs.defaults[ID];
+const getPref = () => prefs.__values[ID] || prefs.defaults[ID];
 
 export let columns = 1;
 let minWidth;
 
 export function init() {
   prefs.subscribe(ID, update);
-  $('#sorter-help').onclick = showHelp;
   addOptions();
   prefs.subscribe('manage.minColumnWidth', updateColumnWidth, true);
 }
 
 function addOptions() {
   let container;
-  const select = $('#' + ID);
+  const select = $id(ID);
   const renderBin = document.createDocumentFragment();
-  const option = $create('option');
-  const optgroup = $create('optgroup');
+  const option = $tag('option');
+  const optgroup = $tag('optgroup');
   const meta = {
     desc: ` 🠇`,
     enabled: t('genericEnabledLabel'),
@@ -170,9 +168,9 @@ export function updateStripes({onlyWhenColumnsChanged} = {}) {
 }
 
 function updateColumnCount() {
-  const useStyle = [].some.call($.root.children,
+  const useStyle = [].some.call($root.children,
     el => el.tagName === 'STYLE' && el.textContent.includes(COL_PROP + ':'));
-  const v = useStyle ? Math.max(1, getComputedStyle($.root).getPropertyValue(COL_PROP) >> 0)
+  const v = useStyle ? Math.max(1, getComputedStyle($root).getPropertyValue(COL_PROP) >> 0)
     : minWidth ? onResize()
       : columns;
   if (columns !== v) {
@@ -187,7 +185,7 @@ function updateColumnWidth(_, val) {
     window.on('resize', onResize);
   } else {
     window.off('resize', onResize);
-    $.root.style.removeProperty(COL_PROP);
+    $root.style.removeProperty(COL_PROP);
   }
   updateStripes({onlyWhenColumnsChanged: true});
 }
@@ -195,24 +193,11 @@ function updateColumnWidth(_, val) {
 function onResize(evt) {
   const c = Math.max(1, (window.innerWidth - dom.HWval) / minWidth >> 0);
   if (columns !== c) {
-    $.root.style.setProperty(COL_PROP, c);
+    $root.style.setProperty(COL_PROP, c);
     if (evt) {
       columns = c;
       updateStripes();
     }
   }
   return c;
-}
-
-async function showHelp(event) {
-  event.preventDefault();
-  messageBox.show({
-    className: 'help-text center-dialog',
-    title: t('sortStylesHelpTitle'),
-    contents:
-      $create('div',
-        t('sortStylesHelp').split('\n').map(line =>
-          $create('p', line))),
-    buttons: [t('confirmOK')],
-  });
 }

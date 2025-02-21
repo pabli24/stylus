@@ -1,9 +1,10 @@
-import '/js/browser';
-import {API} from '/js/msg';
-import * as prefs from '/js/prefs';
-import {isEmptyObj} from '/js/util';
+import '@/js/browser';
+import * as prefs from '@/js/prefs';
+import {isEmptyObj} from '@/js/util';
+import {updateIconBadge} from './icon-manager';
 import {webNavigation} from './navigation-manager';
-import {getSectionsByUrl, order} from './style-manager';
+import {getSectionsByUrl} from './style-manager';
+import {order} from './style-manager/util';
 
 /**
  * Uses chrome.tabs.insertCSS
@@ -48,18 +49,18 @@ export default function initStyleViaApi() {
       throw new Error('we do not count styles for frames');
     }
     const {frameStyles} = getCachedData(tab.id, frameId);
-    API.updateIconBadge.call({sender}, Object.keys(frameStyles));
+    updateIconBadge.call({sender}, Object.keys(frameStyles));
   }
 
   async function styleApply({id = null, ignoreUrlCheck = false}, {tab, frameId, url}) {
-    if (prefs.get('disableAll')) {
+    if (prefs.__values['disableAll']) {
       return;
     }
     const {tabFrames, frameStyles} = getCachedData(tab.id, frameId);
     if (id === null && !ignoreUrlCheck && frameStyles.url === url) {
       return;
     }
-    const {sections} = getSectionsByUrl(url, id);
+    const {sections} = getSectionsByUrl(url, {id});
     const tasks = [];
     for (const sec of sections.sort((a, b) => calcOrder(a) - calcOrder(b))) {
       const styleId = sec.id;

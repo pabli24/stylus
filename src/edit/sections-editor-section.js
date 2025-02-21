@@ -1,15 +1,17 @@
-import {$, toggleDataset} from '/js/dom';
-import {setupLivePrefs} from '/js/dom-util';
-import {template} from '/js/localization';
-import * as prefs from '/js/prefs';
-import * as MozDocMapper from '/js/sections-util';
-import {debounce} from '/js/util';
-import CodeMirror from 'codemirror';
+import {kCodeMirror, kEditorSettings} from '@/js/consts';
+import {$toggleDataset} from '@/js/dom';
+import {setupLivePrefs} from '@/js/dom-util';
+import {templateCache, htmlToTemplate, template} from '@/js/localization';
+import * as prefs from '@/js/prefs';
+import {FROM_CSS, TO_CSS} from '@/js/sections-util';
+import {debounce} from '@/js/util';
+import {CodeMirror} from '@/cm';
 import {initBeautifyButton} from './beautify';
 import cmFactory from './codemirror-factory';
 import editor from './editor';
 import * as linterMan from './linter';
-import {helpPopup, trimCommentLabel} from './util';
+import {htmlEditorSettings} from './settings';
+import {helpPopup, htmlAppliesTo, trimCommentLabel} from './util';
 
 const RX_META1 = /^!?\s*==userstyle==\s*$/i;
 
@@ -21,20 +23,23 @@ export default class EditorSection {
    */
   constructor(sectionData, genId, si) {
     const me = this; // for tocEntry.removed
-    const el = this.el = template.section.cloneNode(true);
-    const elLabel = this.elLabel = $('.code-label', el);
-    const at = this.targetsEl = $('.applies-to', el);
-    // TODO: find another way other than `el.CodeMirror` for getAssociatedEditor
-    const cm = this.cm = el.CodeMirror = cmFactory.create(wrapper => {
+    const el = this.el = templateCache.section.cloneNode(true);
+    const elLabel = this.elLabel = el.$('.code-label');
+    const at = this.targetsEl = el.$('.applies-to');
+    // TODO: find another way other than `el[kCodeMirror]` for getAssociatedEditor
+    const cm = this.cm = el[kCodeMirror] = cmFactory.create(wrapper => {
       const ws = wrapper.style;
       const h = editor.loading
         // making it tall during initial load so IntersectionObserver sees only one adjacent CM
         ? ws.height = si ? si.height : '100vh'
         : ws.height;
       el.style.setProperty('--cm-height', h);
-      at[prefs.get('editor.targetsFirst') ? 'after' : 'before'](wrapper);
+      at[prefs.__values['editor.targetsFirst'] ? 'after' : 'before'](wrapper);
     }, {
       value: sectionData.code,
+      finishInit(_) {
+        editor.applyScrollInfo(_, si);
+      },
     });
     this.elLabelText = elLabel.lastChild;
     cm.el = el;
@@ -53,23 +58,30 @@ export default class EditorSection {
       },
     };
     this.targets = /** @type {SectionTarget[]} */ [];
-    this.targetsListEl = $('.applies-to-list', el);
+    this.targetsListEl = el.$('.applies-to-list');
     this.targetsEl.on('change', this);
     this.targetsEl.on('input', this);
     this.targetsEl.on('click', this);
     cm.on('changes', EditorSection.onCmChanges);
-    MozDocMapper.forEachProp(sectionData, this.addTarget.bind(this));
+    for (const propName in TO_CSS) {
+      const arr = sectionData[propName];
+      const cssName = TO_CSS[propName];
+      if (cssName && arr) for (const v of arr) this.addTarget(cssName, v);
+    }
     if (!this.targets.length) this.addTarget();
-    editor.applyScrollInfo(cm, si);
-    initBeautifyButton($('.beautify-section', el), [cm]);
+    initBeautifyButton(el.$('.beautify-section'), [cm]);
     prefs.subscribe('editor.toc.expanded', this.updateTocPrefToggled.bind(this), true);
     new ResizeGrip(cm); // eslint-disable-line no-use-before-define
     this.updateTocEntry();
   }
 
   getModel() {
-    const items = this.targets.map(_ => _.type && [_.type, _.value]);
-    return MozDocMapper.toSection(items, {code: this.cm.getValue()});
+    /** @type {StyleSection} */
+    const res = {code: this.cm.getValue()};
+    for (const {type, value} of this.targets) {
+      if (type) (res[FROM_CSS[type]] ??= []).push(value);
+    }
+    return res;
   }
 
   remove() {
@@ -168,7 +180,9 @@ export default class EditorSection {
       elUC = this.elUC;
       if (cmt && RX_META1.test(text)) {
         if (elUC) elUC = null;
-        else this.elLabelText.after(elUC = this.elUC = template.usercssSection.cloneNode(true));
+        else {
+          this.elLabelText.after(elUC = this.elUC = templateCache.usercssSection.cloneNode(true));
+        }
       } else if (elUC) {
         elUC.remove();
         elUC = this.elUC = false;
@@ -181,7 +195,7 @@ export default class EditorSection {
 
   /**
    * Used by addEventListener implicitly
-   * @param {Event} evt
+   * @param {MouseEvent} evt
    */
   handleEvent(evt) {
     const el = evt.target;
@@ -192,13 +206,14 @@ export default class EditorSection {
     switch (evt.type) {
       case 'click':
         if (cls.contains('add-applies-to')) {
-          $('input', this.addTarget(trg.type, '', trg).el).focus();
+          this.addTarget(trg.type, '', trg).el.$('input').focus();
         } else if (cls.contains('remove-applies-to')) {
           this.removeTarget(trg);
         } else if (!this.ati && (tmp = el.closest('label'))) {
-          const chk = $('#editor\\.targetsFirst', template.editorSettings.firstChild || document);
+          const chk = (templateCache[kEditorSettings] ??= htmlToTemplate(htmlEditorSettings))
+            .$('#editor\\.targetsFirst');
           const chkLabel = chk.closest('label').cloneNode(true);
-          const ati = this.ati = helpPopup.show(chkLabel, tmp.title, {'data-id': 'ati'});
+          const ati = this.ati = helpPopup.show(chkLabel, tmp.title, {}, 'ati');
           ati.onClose.add(() => delete this.ati);
           setupLivePrefs(chkLabel);
         }
@@ -282,12 +297,12 @@ class SectionTarget {
    */
   constructor(section, type = '', value = '') {
     this.id = section.genId();
-    this.el = template.appliesTo.cloneNode(true);
+    this.el = (templateCache.appliesTo ??= htmlToTemplate(htmlAppliesTo)).cloneNode(true);
     this.el.me = this;
     this.section = section;
     this.dirt = `section.${section.id}.apply.${this.id}`;
-    this.selectEl = $('.applies-type', this.el);
-    this.valueEl = $('.applies-value', this.el);
+    this.selectEl = this.el.$('.applies-type');
+    this.valueEl = this.el.$('.applies-value');
     editor.toggleRegexp(this.valueEl, type);
     this.type = this.selectEl.value = type;
     this.value = this.valueEl.value = value;
@@ -309,7 +324,7 @@ class SectionTarget {
   }
 
   toggleAll() {
-    toggleDataset(this.section.targetsEl, 'all', !this.type);
+    $toggleDataset(this.section.targetsEl, 'all', !this.type);
   }
 
   onSelectChange() {
@@ -397,9 +412,9 @@ class ResizeGrip {
       cm.state.toggleHeightSaved = 0;
     } else {
       // maximize
-      const allBounds = $('#sections').getBoundingClientRect();
+      const allBounds = $id('sections').getBoundingClientRect();
       const pageExtrasHeight = allBounds.top + window.scrollY +
-        parseFloat(getComputedStyle($('#sections')).paddingBottom);
+        parseFloat(getComputedStyle($id('sections')).paddingBottom);
       const sectionEl = wrapper.parentNode;
       const sectionExtrasHeight = sectionEl.clientHeight - wrapper.offsetHeight;
       cm.state.toggleHeightSaved = wrapper.clientHeight;

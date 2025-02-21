@@ -1,9 +1,11 @@
+import {kInvokeAPI} from '@/js/consts';
+
 export const FF = __.BUILD !== 'chrome' && (
   __.ENTRY
     ? 'contextualIdentities' in chrome
     : global !== window
 );
-export const rxIgnorableError = /(R)eceiving end does not exist|The message port closed|moved into back\/forward cache/;
+export const rxIgnorableError = /(R)eceiving end does not exist|The message (port|channel) closed|moved into back\/forward cache/;
 
 export const apiHandler = !__.IS_BG && {
   get: ({name: path}, name) => new Proxy(
@@ -30,11 +32,11 @@ export function updateTDM(value) {
 
 export async function apiSendProxy({name: path}, thisObj, args) {
   const localErr = new Error();
-  const msg = {data: {method: 'invokeAPI', path, args}, TDM};
+  const msg = {data: {method: kInvokeAPI, path, args}, TDM};
   for (let res, err, retry = 0; retry < 2; retry++) {
     try {
       if (__.MV3 || FF) {
-        res = await chrome.runtime.sendMessage(msg);
+        res = await (FF ? browser : chrome).runtime.sendMessage(msg);
       } else {
         res = await new Promise((resolve, reject) =>
           chrome.runtime.sendMessage(msg, res2 =>

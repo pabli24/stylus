@@ -1,12 +1,10 @@
 {
-  "version": "3.0.4",
   "minimum_chrome_version": "128",
   "manifest_version": 3,
   "permissions": [
     "alarms",
     "contextMenus",
     "declarativeNetRequestWithHostAccess",
-    "declarativeNetRequestFeedback",
     "identity",
     "idle",
     "offscreen",

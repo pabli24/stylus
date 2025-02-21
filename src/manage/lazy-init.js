@@ -1,8 +1,9 @@
-import {UCD} from '/js/consts';
-import {$, $create} from '/js/dom';
-import {animateElement} from '/js/dom-util';
-import {formatDate, formatRelativeDate, t} from '/js/localization';
-import {debounce} from '/js/util';
+import {UCD} from '@/js/consts';
+import {$create} from '@/js/dom';
+import {animateElement} from '@/js/dom-util';
+import {formatDate, formatRelativeDate} from '@/js/localization';
+import {CHROME} from '@/js/ua';
+import {debounce, t} from '@/js/util';
 import InjectionOrder from './injection-order';
 import * as router from './router';
 import UpdateHistory from './updater-ui';
@@ -14,11 +15,17 @@ import './incremental-search';
 installed.on('mouseover', lazyAddEntryTitle, {passive: true});
 installed.on('mouseout', lazyAddEntryTitle, {passive: true});
 
-$('#sync-styles').onclick =
-  $('#manage-options-button').onclick = router.makeToggle('stylus-options', toggleEmbeddedOptions);
-$('#injection-order-button').onclick = router.makeToggle('injection-order', InjectionOrder);
-$('#update-history-button').onclick = router.makeToggle('update-history', UpdateHistory);
+router.makeToggle('#manage-options-button, #sync-styles', 'stylus-options', toggleEmbeddedOptions);
+router.makeToggle('#injection-order-button', 'injection-order', InjectionOrder);
+router.makeToggle('#update-history-button', 'update-history', UpdateHistory);
 router.update();
+
+if (!__.MV3 && __.BUILD !== 'firefox' && CHROME >= 80 && CHROME <= 88) {
+  // Wrong checkboxes are randomly checked after going back in history, https://crbug.com/1138598
+  window.on('pagehide', () => {
+    $$('input[type=checkbox]').forEach((el, i) => (el.name = `bug${i}`));
+  });
+}
 
 function addEntryTitle(link) {
   const style = link.closest('.entry').styleMeta;
@@ -34,7 +41,7 @@ function addEntryTitle(link) {
 function lazyAddEntryTitle({type, target}) {
   const cell = target.closest('h2.style-name, [data-type=age]');
   if (cell) {
-    const link = $('.style-name-link', cell) || cell;
+    const link = cell.$('.style-name-link') || cell;
     if (type === 'mouseover' && !link.title) {
       debounce(addEntryTitle, 50, link);
     } else {
@@ -43,12 +50,14 @@ function lazyAddEntryTitle({type, target}) {
   }
 }
 
-async function toggleEmbeddedOptions(show, el, selector) {
+async function toggleEmbeddedOptions(show, el, selector, toggler) {
   document.title = t(show ? 'optionsHeading' : 'styleManager');
   // TODO: use messageBox() or a dockable sidepanel or the chrome.sidePanel API
   if (show) {
-    $.root.appendChild($create('iframe' + selector, {src: '/options.html'}))
-      .focus();
+    el = $root.appendChild($create('iframe' + selector));
+    el.focus();
+    // Chrome bug workaround. TODO: use `src` on the element when minimum_chrome_version>79
+    el.contentWindow.location = '/options.html#' + toggler.id;
     await new Promise(resolve => (window.closeOptions = resolve));
   } else {
     await animateElement(el, 'fadeout');

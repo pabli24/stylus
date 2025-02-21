@@ -9,6 +9,8 @@
 }
 :root {
   --family: Arial, "Helvetica Neue", Helvetica, system-ui, sans-serif;
+  --font-size: 12px;
+  --icon-font-size: 20px;
   --input-height: 24px;
   --cmin: hsl(0, 0%, 00%);
   --c00: hsl(0, 0%, 00%);
@@ -39,15 +41,19 @@
   --gold1: gold;
   --red1: hsl(0, 70%, 45%);
   --zebra: hsla(0, 0%, 50%, 0.05);
+  --100dvh: 100dvh;
+  @supports not (height: 1dvh) {
+    --100dvh: 100vh;
+  }
 }
 body {
-  font: normal 12px var(--family);
+  font: normal var(--font-size) var(--family);
   background-color: var(--bg);
   color: var(--fg);
   margin: 0;
   hyphens: auto;
   .mobile > & {
-    max-height: 100vh;
+    max-height: var(--100dvh);
   }
   &:lang(ja) {
     font-family: Arial, 'Meiryo UI', 'MS Gothic', system-ui, sans-serif;
@@ -60,12 +66,14 @@ body {
     font-family: Arial, 'Microsoft JhengHei UI', 'Microsoft JhengHei', system-ui, sans-serif;
   }
 }
-
+.dvh100 {
+  height: var(--100dvh);
+}
 a {
   color: var(--fg);
   transition: color .1s;
   &:hover {
-    color: var(--c40);
+    color: var(--accent-1);
   }
   &.icon { text-decoration: none; }
 }
@@ -100,7 +108,7 @@ button {
     background-repeat: repeat-x;
     background-size: 100% 100%;
   }
-  & i {
+  i {
     cursor: auto;
   }
 }
@@ -119,7 +127,7 @@ input {
   border: 1px solid var(--c65);
   transition: border-color .1s, box-shadow .1s;
   color: inherit;
-  &:not([type]), &[type=text], &[type=number], &[type=search] {
+  &:not([type]), &[type=text], &[type=number], &[type=search], &[type=url] {
     background: var(--bg);
     color: var(--fg);
     height: var(--input-height);
@@ -136,10 +144,12 @@ input {
 }
 
 i {
-  cursor: pointer;
+  a[href] > & {
+    cursor: pointer;
+  }
   vertical-align: middle;
   transition: color .1s;
-  font: 20px/1 icons;
+  font: var(--icon-font-size)/1 icons;
   color: var(--c40);
   &:hover {
     color: var(--fg);
@@ -272,6 +282,18 @@ input[type="radio"] {
 summary {
   -moz-user-select: none;
   user-select: none;
+  &:hover {
+    color: var(--accent-1);
+  }
+}
+
+.hollow-gear {
+  cursor: default;
+  height: var(--icon-font-size);
+  font: normal var(--icon-font-size) icons;
+  fill: transparent;
+  stroke: currentColor;
+  vertical-align: middle;
 }
 
 /* global stuff we use everywhere */
@@ -287,11 +309,14 @@ summary {
 .flex {
   display: flex;
 }
+.center-items {
+  align-items: center;
+}
 .wrap {
   flex-wrap: wrap;
 }
-.gap1 > :nth-last-child(n + 2) {
-  margin-right: .25rem;
+.w100 {
+  width: 100%;
 }
 .no-stretch {
   /* reuse the current width of the parent flexbox */
@@ -311,6 +336,9 @@ html:not(.all-disabled) {
   & #disableAll-label::after {
     content: attr(data-on);
   }
+}
+#disableAll-label {
+  display: inline-flex;
 }
 .all-disabled {
   #disableAll-label {
@@ -468,7 +496,7 @@ body {
   }
 }
 
-@media (max-width: 850px) {
+@media screen and (max-width: 850px), compact {
   #header-resizer {
     display: none !important;
   }
@@ -477,14 +505,16 @@ body {
 @font-face {
   font-family: 'icons';
   src: url(icons.ttf) format('truetype');
-  unicode-range: /*AUTO-GENERATED-ICON-RANGE*/ U+20,U+2195,U+2197,U+21b2,U+21b6,U+222a,U+2298,U+22c1,U+22ee,U+24d8,U+25bc,U+25f4,U+2611,U+2699,U+270f,U+2713,U+2714,U+2716,U+2795,U+2796,U+27f3,U+d83e;
+  unicode-range: /*AUTO-GENERATED-ICON-RANGE*/ U+20,U+2195,U+2197,U+21b2,U+21b6,U+222a,U+2298,U+22c1,U+22ee,U+2398,U+24d8,U+25bc,U+25f4,U+2611,U+2699,U+26c8,U+270f,U+2713,U+2714,U+2716,U+2795,U+2796,U+27f3,U+d83e;
 }
 
 /*AUTO-GENERATED-ICON*/ .i-check1::after { content: "✓"; }
 /*AUTO-GENERATED-ICON*/ .i-check2::after { content: "✔"; }
 /*AUTO-GENERATED-ICON*/ .i-checked::after { content: "☑"; }
 /*AUTO-GENERATED-ICON*/ .i-close::after { content: "✖"; }
+/*AUTO-GENERATED-ICON*/ .i-cloud::after { content: "⛈"; }
 /*AUTO-GENERATED-ICON*/ .i-config::after { content: "⚙"; }
+/*AUTO-GENERATED-ICON*/ .i-copy::after { content: "⎘"; }
 /*AUTO-GENERATED-ICON*/ .i-edit::after { content: "✏"; }
 /*AUTO-GENERATED-ICON*/ .i-empty::after { content: "⊘"; }
 /*AUTO-GENERATED-ICON*/ .i-external::after { content: "↗"; }
@@ -497,7 +527,7 @@ body {
 /*AUTO-GENERATED-ICON*/ .i-reorder::after { content: "↕"; }
 /*AUTO-GENERATED-ICON*/ .i-select-arrow::after { content: "▼"; }
 /*AUTO-GENERATED-ICON*/ .i-sort-down::after { content: "🠇"; }
-/*AUTO-GENERATED-ICON*/ .i-usercss::after { content: "∪"; }
 /*AUTO-GENERATED-ICON*/ .i-undo::after { content: "↶"; }
 /*AUTO-GENERATED-ICON*/ .i-update-check::after { content: "⟳"; }
+/*AUTO-GENERATED-ICON*/ .i-usercss::after { content: "∪"; }
 /*AUTO-GENERATED-ICON*/ .i-v::after { content: "⋁"; }

@@ -1,30 +1,41 @@
-import '/js/dom-init';
-import {CodeMirror, loadCmTheme, THEME_KEY} from '/cm';
-import compareVersion from '/js/cmpver';
-import {UCD} from '/js/consts';
-import {$, $$, $$remove, $create, $createLink} from '/js/dom';
-import {configDialog, messageBox, showSpinner} from '/js/dom-util';
-import {fetchTemplate, t, tBody} from '/js/localization';
-import {API} from '/js/msg';
-import * as prefs from '/js/prefs';
-import {styleCodeEmpty} from '/js/sections-util';
-import {isLocalhost} from '/js/urls';
-import {clipString, deepEqual, sessionStore, tryURL} from '/js/util';
-import {closeCurrentTab} from '/js/util-webext';
+import '@/js/dom-init';
+import {CodeMirror, loadCmTheme, THEME_KEY} from '@/cm';
+import compareVersion from '@/js/cmpver';
+import {UCD} from '@/js/consts';
+import {$$remove, $create, $createLink} from '@/js/dom';
+import {configDialog, messageBox, showSpinner} from '@/js/dom-util';
+import {htmlToTemplate, tBody} from '@/js/localization';
+import {API} from '@/js/msg-api';
+import * as prefs from '@/js/prefs';
+import {styleCodeEmpty} from '@/js/sections-util';
+import {isLocalhost} from '@/js/urls';
+import {clipString, debounce, deepEqual, sessionStore, t, tryURL} from '@/js/util';
+import {closeCurrentTab} from '@/js/util-webext';
 import DirectDownloader from './direct-downloader';
 import PortDownloader from './port-downloader';
+import htmlStyleOpts from '../edit/style-settings.html';
+import '../edit/settings.css';
 import './install-usercss.css';
 
 const CFG_SEL = '#message-box.config-dialog';
 let cfgShown = true;
 
 let cm;
+/** @type {FileSystemHandle} */
+let fsh;
+/** @type {FileSystemObserver | boolean} */
+let fso;
 /** @type function(?options):Promise<?string> */
 let getData;
 let initialUrl;
+/** @type {StyleObj} */
+let style;
+/** @type {StyleObj} */
 let installed;
-let installedDup;
+/** @type {StyleObj} */
+let dup;
 let liveReload;
+let liveReloadEnabled = false;
 let sectionsPromise;
 let tabId;
 let vars;
@@ -33,19 +44,18 @@ let vars;
 // which stays after installing since we don't want to wait for the fadeout animation before resolving.
 document.on('visibilitychange', () => {
   $$remove('#message-box:not(.config-dialog)');
-  if (installed) liveReload.onToggled();
+  if (installed) liveReload();
 });
 tBody();
-setTimeout(() => !cm && showSpinner($('#header')), 200);
+setTimeout(() => !cm && showSpinner($id('header')), 200);
 
 (async function init() {
   if (location.hash) {
     history.replaceState(null, '',
       location.pathname + '?updateUrl=' + encodeURIComponent(location.hash.slice(1)));
   }
-  /** @type {FileSystemFileHandle} */
-  const fsh = window.fsh;
   const params = new URLSearchParams(location.search);
+  fsh = window.fsh;
   tabId = params.has('tabId') ? Number(params.get('tabId')) : -1;
   initialUrl = fsh ? fsh._url : params.get('updateUrl');
 
@@ -67,19 +77,17 @@ setTimeout(() => !cm && showSpinner($('#header')), 200);
       .then(code => code || getData())
       .catch(getData);
   } else if (!__.MV3) {
-    getData = PortDownloader();
+    getData = PortDownloader(initialUrl, tabId);
     firstGet = getData({force: true});
   }
 
   const hasFileAccessP = browser.extension.isAllowedFileSchemeAccess();
-  const tplP = fetchTemplate('/edit.html', 'styleSettings');
-  tplP.then(el => {
-    el.firstChild.remove(); // update URL
-    el.lastChild.remove(); // buttons
-    $('#styleSettings').append(el);
-  });
+  const elSettings = htmlToTemplate(htmlStyleOpts);
+  elSettings.$('#ss-update-url').closest('div').remove();
+  elSettings.$('.buttons').remove();
+  $('.settings').append(elSettings);
 
-  let dup, style, error, sourceCode;
+  let error, sourceCode;
   try {
     sourceCode = await firstGet;
     ({dup, style} = await API.usercss.build({sourceCode, checkDup: true, metaOnly: true}));
@@ -96,7 +104,7 @@ setTimeout(() => !cm && showSpinner($('#header')), 200);
     messageBox.alert(isNaN(error) ? `${error}` : 'HTTP Error ' + error, 'pre');
     return;
   }
-  const theme = prefs.get(THEME_KEY);
+  const theme = prefs.__values[THEME_KEY];
   loadCmTheme(theme);
   cm = CodeMirror($('.main'), {
     value: sourceCode || style.sourceCode,
@@ -115,12 +123,14 @@ setTimeout(() => !cm && showSpinner($('#header')), 200);
   const dupData = dup && dup[UCD];
   const versionTest = dup && compareVersion(data.version, dupData.version);
 
-  updateMeta(style, dup);
+  updateMeta();
   if (dup) {
     ($(`[name="ss-scheme"][value="${dup.preferScheme}"]`) || {}).checked = true;
+  } else {
+    $('.live-reload span').textContent = t('liveReloadAfterInstall');
   }
   for (let type of ['in', 'ex']) {
-    const el = $('#ss-' + (type += 'clusions'));
+    const el = $id('ss-' + (type += 'clusions'));
     const list = dup && dup[type] || [];
     el.value = list.join('\n') + (list[0] ? '\n' : '');
     el.rows = list.length + 2;
@@ -169,19 +179,23 @@ setTimeout(() => !cm && showSpinner($('#header')), 200);
   $('.set-update-url p').textContent = clipString(updateUrl.href || '', 300);
 
   // set prefer scheme
-  $('#ss-scheme').onchange = e => {
+  $id('ss-scheme').onchange = e => {
     style.preferScheme = e.target.value;
   };
 
   if (!initialUrl || isLocalhost(initialUrl)) {
-    $('.live-reload input').onchange = liveReload.onToggled;
+    $('.live-reload input').onchange = liveReload;
   } else {
     $('.live-reload').remove();
   }
 })();
 
-function updateMeta(style, dup = installedDup) {
-  installedDup = dup;
+function updateMeta(newStyle) {
+  if (newStyle) {
+    // also triggers an update of the currently shown configDialog
+    Object.assign(style, newStyle);
+    for (const k in style) if (!(k in newStyle)) delete style[k];
+  }
   const data = style[UCD];
   const dupData = dup && dup[UCD];
   const versionTest = dup && compareVersion(data.version, dupData.version);
@@ -214,7 +228,7 @@ function updateMeta(style, dup = installedDup) {
   replaceChildren($('.meta-author'), makeAuthor(data.author), true);
   replaceChildren($('.meta-license'), data.license, true);
   replaceChildren($('.external-link'), makeExternalLink());
-  getAppliesTo(style).then(list =>
+  getAppliesTo().then(list =>
     replaceChildren($('.applies-to'), list.map(s => $create('li', s))));
 
   Object.assign($('.configure-usercss'), {
@@ -238,9 +252,9 @@ function updateMeta(style, dup = installedDup) {
     openConfigDialog();
   }
 
-  $('#header').dataset.arrivedFast = performance.now() < 500;
-  $('#header').classList.add('meta-init');
-  $('#header').classList.remove('meta-init-error');
+  $id('header').dataset.arrivedFast = performance.now() < 500;
+  $id('header').classList.add('meta-init');
+  $id('header').classList.remove('meta-init-error');
 
   setTimeout(() => $$remove('.lds-spinner'), 1000);
   showError('');
@@ -277,11 +291,11 @@ function updateMeta(style, dup = installedDup) {
           $create('li',
             $createLink(...args)
           )
-        )),
+        ).filter(Boolean)),
       ]));
   }
 
-  async function openConfigDialog() {
+  function openConfigDialog() {
     configDialog(style);
   }
 }
@@ -314,31 +328,32 @@ function showError(err) {
 }
 
 function showBuildError(error) {
-  $('#header').classList.add('meta-init-error');
+  $id('header').classList.add('meta-init-error');
   console.error(error);
   showError(error);
 }
 
-function install(style) {
-  installed = style;
+function install(res) {
+  installed = res;
 
   $$remove('.warning');
   $('button.install').disabled = true;
   $('button.install').classList.add('installed');
-  $('#live-reload-install-hint').hidden = !liveReload.enabled;
+  $id('live-reload-install-hint').hidden = !liveReloadEnabled;
   $('.set-update-url').title = style.updateUrl ?
     t('installUpdateFrom', style.updateUrl) : '';
   $$('.install-disable input').forEach(el => (el.disabled = true));
   document.body.classList.add('installed');
   enablePostActions();
-  updateMeta(style);
+  updateMeta(res);
+  if (liveReloadEnabled) liveReload();
 }
 
 function enablePostActions() {
-  const {id} = installed || installedDup;
+  const {id} = installed || dup;
   sessionStore.justEditedStyleId = id;
-  $('#edit').search = `?id=${id}`;
-  $('#delete').onclick = async () => {
+  $id('edit').search = `?id=${id}`;
+  $id('delete').onclick = async () => {
     if (await messageBox.confirm(t('deleteStyleConfirm'), 'danger center', t('confirmDelete'))) {
       await API.styles.remove(id);
       if (tabId < 0 && history.length > 1) {
@@ -350,7 +365,7 @@ function enablePostActions() {
   };
 }
 
-async function getAppliesTo(style) {
+async function getAppliesTo() {
   if (sectionsPromise) {
     try {
       style.sections = (await sectionsPromise).sections;
@@ -389,56 +404,53 @@ function adjustCodeHeight() {
 
 function initLiveReload() {
   const DELAY = 500;
-  let isEnabled = false;
-  let timer = 0;
+  let timer = true;
   let sequence = Promise.resolve();
-  return {
-    get enabled() {
-      return isEnabled;
-    },
-    onToggled(e) {
-      if (e) isEnabled = e.target.checked;
-      if (installed || installedDup) {
-        if (isEnabled) {
-          check({force: true});
-        } else {
-          stop();
-        }
-        $('.install').disabled = isEnabled;
-        Object.assign($('#live-reload-install-hint'), {
-          hidden: !isEnabled,
-          textContent: t(`liveReloadInstallHint${tabId >= 0 ? 'FF' : ''}`),
-        });
-      }
-    },
+  return e => {
+    if (e) liveReloadEnabled = e.target.checked;
+    if (!installed && !dup) return;
+    if (liveReloadEnabled) start({force: true}); else stop();
+    $('.install').disabled = liveReloadEnabled;
+    Object.assign($id('live-reload-install-hint'), {
+      hidden: !liveReloadEnabled,
+      textContent: t(`liveReloadInstallHint${tabId >= 0 ? 'FF' : ''}`),
+    });
   };
 
-  function check(opts) {
-    getData(opts)
-      .then(update, logError)
-      .then(() => {
-        timer = 0;
-        start();
-      });
+  async function check(opts) {
+    try {
+      update(await getData(opts));
+    } catch (err) {
+      console.warn(t('liveReloadError', err));
+    }
+    if (timer) timer = setTimeout(check, DELAY);
   }
 
-  function logError(error) {
-    console.warn(t('liveReloadError', error));
-  }
-
-  function start() {
-    timer = timer || setTimeout(check, DELAY);
+  async function start(opts) {
+    if (fsh
+    && (fso || (fso = global.FileSystemObserver) && (fso = new fso(() => debounce(check, 20))))) {
+      try {
+        await fso.observe(fsh);
+        timer = false; // disables polling on successful registration of the observer
+      } catch {
+        timer = true;
+      }
+    }
+    check(opts);
   }
 
   function stop() {
-    clearTimeout(timer);
-    timer = 0;
+    if (timer) {
+      timer = clearTimeout(timer);
+    } else if (fso) {
+      fso.disconnect();
+    }
   }
 
   function update(code) {
     if (code == null) return;
     sequence = sequence.catch(console.error).then(() => {
-      const {id} = installed || installedDup;
+      const {id} = installed || dup;
       const scrollInfo = cm.getScrollInfo();
       const cursor = cm.getCursor();
       cm.setValue(code);

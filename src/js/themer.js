@@ -6,28 +6,31 @@
  * which also happens before the first paint unless the browser "yields", but that's abnormal
  * and not even a problem in the most popular case of using system dark/light mode.
  */
-import {$, $create} from './dom';
+import {$create} from './dom';
 import {getCssMediaRuleByName} from './dom-util';
-import {onExtension} from './msg';
+import {onMessage} from './msg';
 import {clientData} from './prefs';
 import {MF_ICON_EXT, MF_ICON_PATH} from './util-webext';
-import '/css/global.css';
-import '/css/global-dark.css';
+import '@/css/global.css';
+import '@/css/global-dark.css';
 
+export const onDarkChanged = new Set();
 export const MEDIA_ON = 'screen';
 export const MEDIA_OFF = 'not all';
 const MEDIA_NAME = 'dark';
 const map = {[MEDIA_ON]: true, [MEDIA_OFF]: false};
 
+export let isDark;
+
 (async () => {
-  let isDark, favicon;
+  let favicon;
   if (window === top) ({dark: isDark, favicon} = __.MV3 ? clientData : await clientData);
   else isDark = parent.document.documentElement.dataset.uiTheme === 'dark';
-  updateDOM(isDark);
-  onExtension(e => {
+  updateDOM();
+  onMessage.set(e => {
     if (e.method === 'colorScheme' && isDark !== e.value) {
       isDark = e.value;
-      updateDOM(isDark);
+      updateDOM();
     }
   });
   if (favicon
@@ -39,14 +42,14 @@ const map = {[MEDIA_ON]: true, [MEDIA_OFF]: false};
       sizes: size + 'x' + size,
     })));
   }
-
 })();
 
-function updateDOM(isDark) {
-  $.root.dataset.uiTheme = isDark ? 'dark' : 'light';
+function updateDOM() {
+  $root.dataset.uiTheme = isDark ? 'dark' : 'light';
   getCssMediaRuleByName(MEDIA_NAME, m => {
     if (map[m[0]] !== isDark) {
       m.mediaText = `${isDark ? MEDIA_ON : MEDIA_OFF},${MEDIA_NAME}`;
     }
   });
+  for (const fn of onDarkChanged) fn(isDark);
 }

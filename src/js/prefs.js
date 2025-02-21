@@ -1,26 +1,24 @@
 /** Don't use this file in content script context! */
+import {k_busy} from '@/js/consts';
 import {API} from './msg-api';
 import {deepCopy, deepEqual, isCssDarkScheme, makePropertyPopProxy} from './util';
 import {onStorageChanged} from './util-webext';
 import './msg-init'; // installs direct `API` handler
 
-let busy, setReady;
+let busy, ready, setReady;
+let toUpload;
 
 /** @type {StylusClientData & {then: (cb: (data: StylusClientData) => ?) => Promise}} */
 export const clientData = !__.IS_BG && (
   __.MV3
     ? global[__.CLIENT_DATA]
-    : API.setClientData(null, {url: location.href, dark: isCssDarkScheme()}).then(data => {
+    : API.setClientData({url: location.href, dark: isCssDarkScheme()}).then(data => {
       data = makePropertyPopProxy(data);
       setAll(data.prefs);
       return data;
     })
 );
 
-/**
- * @type PrefsValues
- * @namespace PrefsValues
- */
 const defaults = {
   __proto__: null,
   // TODO: sort everything aphabetically
@@ -35,9 +33,10 @@ const defaults = {
   'patchCsp': false,              // add data: and popular image hosting sites to strict CSP
   'show-badge': true,             // display text on popup menu icon
   'styleViaASS': false,           // document.adoptedStyleSheets
-  'styleViaXhr': true,            // early style injection to avoid FOUC
+  'styleViaXhr': false,           // early style injection to avoid FOUC
   'urlInstaller': true,           // auto-open installer page for supported .user.css urls
   'windowPosition': {},           // detached window position
+  'compactWidth': 850,
 
   // checkbox in style config dialog
   'config.autosave': true,
@@ -60,9 +59,10 @@ const defaults = {
   'manage.onlyLocal.invert': false,   // display only externally installed styles
   'manage.onlyUsercss.invert': false, // display only non-usercss (standard) styles
   // UI element state: expanded/collapsed
-  'manage.actions.expanded': true,
+  'manage.actions.expanded': false,
   'manage.backup.expanded': true,
   'manage.filters.expanded': true,
+  'manage.links.expanded': true,
   'manage.minColumnWidth': 750,
   // the new compact layout doesn't look good on Android yet
   'manage.newUI': true,
@@ -156,12 +156,12 @@ const defaults = {
   'updateOnlyEnabled': false,
 };
 const warnUnknown = console.warn.bind(console, 'Unknown preference "%s"');
-/** @type {PrefsValues} */
 const values = deepCopy(defaults);
+/** @type {Record<string, Set<function>>} */
 const onChange = {};
 
 export const STORAGE_KEY = 'settings';
-/** @type {PrefsValues} */
+/** @type {typeof defaults} */
 const defaultsClone = new Proxy({}, {
   get: (_, key) => deepCopy(defaults[key]),
 });
@@ -172,7 +172,7 @@ export const get = key => {
   return res && typeof res === 'object' ? deepCopy(res) : res;
 };
 
-export let set = (key, val, isSynced) => {
+export const set = (key, val, isSynced) => {
   const old = values[key];
   const def = defaults[key];
   const type = typeof def;
@@ -185,16 +185,13 @@ export let set = (key, val, isSynced) => {
   }
   if (val === old || type === 'object' && deepEqual(val, old)) return;
   values[key] = val;
-  const fns = onChange[key];
-  if (fns) for (const fn of fns) fn(key, val);
-  if (!isSynced && !__.IS_BG) API.prefs.set(key, val);
+  if (!global[k_busy] || !__.IS_BG) onChange[key]?.forEach(fn => fn(key, val));
+  if (!isSynced && !__.IS_BG) (toUpload ??= Promise.resolve().then(upload) && {})[key] = val;
   /* browser.storage is slow and can randomly lose values if the tab was closed immediately,
    so we're sending the value to the background script which will save it to the storage;
    the extra bonus is that invokeAPI is immediate in extension tabs. */
-  return true;
+  return __.IS_BG ? set._bgSet(key, val) : true;
 };
-
-export const __newSet = fn => (set = fn);
 
 export const reset = key => {
   set(key, deepCopy(defaults[key]));
@@ -214,7 +211,7 @@ export const subscribe = (keys, fn, runNow) => {
     if (!(key in defaults)) { warnUnknown(key); continue; }
     (onChange[key] ??= new Set()).add(fn);
     if (runNow) {
-      if (!busy) fn(key, values[key]);
+      if (!busy) fn(key, values[key], true);
       else (toRun ??= []).push(key);
     }
   }
@@ -235,6 +232,11 @@ export const unsubscribe = (keys, fn) => {
   }
 };
 
+function upload() {
+  API.setPrefs(toUpload);
+  toUpload = null;
+}
+
 function setAll(data, fromStorage) {
   busy = false;
   if (!fromStorage) {
@@ -252,14 +254,14 @@ function setAll(data, fromStorage) {
 }
 
 if (__.IS_BG) {
-  busy = new Promise(cb => (setReady = cb));
+  busy = ready = new Promise(cb => (setReady = cb));
   busy.set = (...args) => setReady(setAll(...args));
 } else if (__.MV3) {
   setAll(clientData.prefs);
-  busy = Promise.resolve();
-  busy.then = fn => fn(); // run synchronously in the same microtick because the data is ready
+  ready = Promise.resolve();
+  ready.then = fn => fn(); // run synchronously in the same microtick because the data is ready
 } else {
-  busy = clientData;
+  busy = ready = clientData;
 }
 
 onStorageChanged.addListener((changes, area) => {
@@ -269,7 +271,7 @@ onStorageChanged.addListener((changes, area) => {
 });
 
 export {
-  busy as ready,
+  ready,
   defaultsClone as defaults,
   defaults as __defaults, // direct reference, be careful!
   values as __values, // direct reference, be careful!

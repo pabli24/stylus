@@ -1,9 +1,8 @@
-import {$} from '/js/dom';
-import {template} from '/js/localization';
-import * as prefs from '/js/prefs';
-import {WINDOWS} from '/js/ua';
-import {deepMerge} from '/js/util';
-import CodeMirror from 'codemirror';
+import {template} from '@/js/localization';
+import * as prefs from '@/js/prefs';
+import {WINDOWS} from '@/js/ua';
+import {deepMerge} from '@/js/util';
+import CM from 'codemirror';
 import 'codemirror/lib/codemirror.css';
 import 'codemirror/addon/comment/comment';
 import 'codemirror/addon/dialog/dialog';
@@ -32,11 +31,11 @@ import 'codemirror/keymap/sublime';
 import 'codemirror/keymap/vim';
 import 'codemirror/mode/css/css';
 import 'codemirror/mode/stylus/stylus';
-import '/vendor-overwrites/codemirror-addon/match-highlighter.js';
+import '@/vendor-overwrites/codemirror-addon/match-highlighter.js';
 import {THEME_KEY} from './themes';
 import './index.css';
 
-export {CodeMirror};
+export const CodeMirror = CM; // workaround for webpack's `codemirror_default()` import
 export * from './themes';
 
 export const extraKeys = Object.assign(CodeMirror.defaults.extraKeys || {}, {
@@ -60,33 +59,33 @@ export const extraKeys = Object.assign(CodeMirror.defaults.extraKeys || {}, {
 
 prefs.ready.then(() => {
   // CodeMirror miserably fails on keyMap='' so let's ensure it's not
-  if (!prefs.get('editor.keyMap')) {
+  if (!prefs.__values['editor.keyMap']) {
     prefs.reset('editor.keyMap');
   }
 
   const defaults = {
-    autoCloseBrackets: prefs.get('editor.autoCloseBrackets'),
+    autoCloseBrackets: prefs.__values['editor.autoCloseBrackets'],
     mode: 'css',
     lineNumbers: true,
-    lineWrapping: prefs.get('editor.lineWrapping'),
+    lineWrapping: prefs.__values['editor.lineWrapping'],
     foldGutter: true,
     gutters: [
-      ...(prefs.get('editor.linter') ? ['CodeMirror-lint-markers'] : []),
+      ...(prefs.__values['editor.linter'] ? ['CodeMirror-lint-markers'] : []),
       'CodeMirror-linenumbers',
       'CodeMirror-foldgutter',
     ],
     matchBrackets: true,
     hintOptions: {},
-    lintReportDelay: prefs.get('editor.lintReportDelay'),
+    lintReportDelay: prefs.__values['editor.lintReportDelay'],
     styleActiveLine: {nonEmpty: true},
-    theme: prefs.get(THEME_KEY),
-    keyMap: prefs.get('editor.keyMap'),
+    theme: prefs.__values[THEME_KEY],
+    keyMap: prefs.__values['editor.keyMap'],
     extraKeys,
     maxHighlightLength: 100e3,
     undoDepth: 1000,
   };
 
-  deepMerge(prefs.get('editor.options'), Object.assign(CodeMirror.defaults, defaults));
+  deepMerge(prefs.__values['editor.options'], Object.assign(CodeMirror.defaults, defaults));
   CodeMirror.mimeModes['text/css'].allowNested = true;
 
   // Adding hotkeys to some keymaps except 'basic' which is primitive by design
@@ -185,7 +184,7 @@ prefs.ready.then(() => {
   Object.assign(CodeMirror.commands, {
     jumpToLine(cm) {
       const cur = cm.getCursor();
-      const oldDialog = $('.CodeMirror-dialog', cm.display.wrapper);
+      const oldDialog = cm.display.wrapper.$('.CodeMirror-dialog');
       if (oldDialog) cm.focus(); // close the currently opened minidialog
       cm.openDialog(template.jumpToLine.cloneNode(true), str => {
         const [line, ch] = str.match(/^\s*(\d+)(?:\s*:\s*(\d+))?\s*$|$/);

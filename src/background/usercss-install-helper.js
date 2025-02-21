@@ -1,19 +1,21 @@
-import '/js/browser';
-import {kContentType, kMainFrame} from '/js/consts';
-import {DNR_ID_INSTALLER, updateDynamicRules} from '/js/dnr';
-import * as prefs from '/js/prefs';
-import * as URLS from '/js/urls';
-import {RX_META} from '/js/util';
-import {FIREFOX} from '/js/ua';
-import {bgBusy, safeTimeout} from './common';
+import '@/js/browser';
+import {kContentType, kMainFrame} from '@/js/consts';
+import {DNR_ID_INSTALLER, updateDynamicRules} from '@/js/dnr';
+import * as prefs from '@/js/prefs';
+import {FIREFOX} from '@/js/ua';
+import * as URLS from '@/js/urls';
+import {getHost, RX_META} from '@/js/util';
+import {bgBusy, onTabUrlChange} from './common';
 import download from './download';
-import * as tabMan from './tab-manager';
+import tabCache, * as tabMan from './tab-manager';
 import {openURL} from './tab-util';
 
 const installCodeCache = {};
+const MIME = 'mime';
+export const kUrlInstaller = 'urlInstaller';
 
 bgBusy.then(() => {
-  prefs.subscribe('urlInstaller', toggle, true);
+  prefs.subscribe(kUrlInstaller, toggle, true);
 });
 
 export function getInstallCode(url) {
@@ -24,9 +26,13 @@ export function getInstallCode(url) {
   return code;
 }
 
-function toggle(key, val) {
-  if (val) tabMan.onUrl.add(maybeInstall);
-  else tabMan.onUrl.delete(maybeInstall);
+function toggle(key, val, isInit) {
+  if (val) onTabUrlChange.add(maybeInstall);
+  else onTabUrlChange.delete(maybeInstall);
+  if (!__.MV3 || !isInit) toggleUrlInstaller(val);
+}
+
+export function toggleUrlInstaller(val) {
   const urls = val ? [''] : [
     /* Known distribution sites where we ignore urlInstaller option, because
        they open .user.css URL only when the "Install" button is clicked.
@@ -44,12 +50,12 @@ function toggle(key, val) {
           : /^.*\.user\.css$/).source,
         requestDomains: val
           ? undefined
-          : [...new Set(urls.map(u => u.split('/')[2]))],
+          : [...new Set(urls.map(getHost))],
         resourceTypes: [kMainFrame],
         responseHeaders: [{
           header: kContentType,
           values: ['text/*'],
-          excludedValues: ['text/html'],
+          excludedValues: ['text/html*'], // * excludes charset and whatnot
         }],
       },
       action: {
@@ -69,7 +75,7 @@ function toggle(key, val) {
 }
 
 function clearInstallCode(url) {
-  return delete installCodeCache[url];
+  delete installCodeCache[url];
 }
 
 /** Ignoring .user.css response that is not a plain text but a web page.
@@ -88,7 +94,7 @@ async function loadFromFile(tabId) {
 async function loadFromUrl(tabId, url) {
   return (
     url.startsWith('file:') ||
-    tabMan.get(tabId, isContentTypeText.name)
+    tabCache[tabId]?.[MIME]
   ) && download(url);
 }
 
@@ -106,7 +112,7 @@ function reduceUsercssGlobs(res, host) {
 
 async function maybeInstall(tabId, url, oldUrl = '') {
   if (url.includes('.user.') &&
-      tabMan.get(tabId, isContentTypeText.name) !== false &&
+      tabCache[tabId]?.[MIME] !== false &&
       /^(https?|file|ftps?):/.test(url) &&
       /\.user\.(css|less|styl)$/.test(url.split(/[#?]/, 1)[0]) &&
       !oldUrl.startsWith(makeInstallerUrl(url))) {
@@ -121,7 +127,7 @@ async function maybeInstall(tabId, url, oldUrl = '') {
 function maybeInstallByMime({tabId, url, responseHeaders}) {
   const h = responseHeaders.find(_ => _.name.toLowerCase() === kContentType);
   const isText = h && isContentTypeText(h.value);
-  tabMan.set(tabId, isContentTypeText.name, isText);
+  tabMan.set(tabId, MIME, isText);
   if (isText) {
     openInstallerPage(tabId, url, {});
     // Silently suppress navigation.
@@ -142,7 +148,7 @@ async function openInstallerPage(tabId, url, {code, inTab} = {}) {
       currentWindow: null,
     });
   }
-  const timer = safeTimeout(clearInstallCode, 10e3, url);
+  const timer = setTimeout(clearInstallCode, 10e3, url);
   installCodeCache[url] = {code, timer};
   try {
     await browser.tabs.update(tabId, {url: newUrl});

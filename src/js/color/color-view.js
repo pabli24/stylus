@@ -1,16 +1,17 @@
-import * as colorConverter from '/js/color/color-converter';
-import ColorPicker from '/js/color/color-picker';
-import CodeMirror from 'codemirror';
+import {getStyleAtPos} from '@/cm/util';
+import * as colorConverter from '@/js/color/color-converter';
+import ColorPicker from '@/js/color/color-picker';
+import {CodeMirror} from '@/cm';
 
 //region Constants
 
 const COLORVIEW_CLASS = 'colorview';
-const COLORVIEW_SWATCH_CLASS = COLORVIEW_CLASS + '-swatch';
-const COLORVIEW_SWATCH_CSS = `--${COLORVIEW_SWATCH_CLASS}:`;
+export const COLORVIEW_SWATCH_CLASS = COLORVIEW_CLASS + '-swatch';
+export const COLORVIEW_SWATCH_PROP = `--${COLORVIEW_SWATCH_CLASS}`;
 const CLOSE_POPUP_EVENT = 'close-colorpicker-popup';
 
 const {RX_COLOR, testAt} = colorConverter;
-const RX_UNSUPPORTED = (s => s && new RegExp(s))([
+const RX_UNSUPPORTED = !__.MV3 && (s => s && new RegExp(s))([
   !CSS.supports('color', '#abcd') && /#(.{4}){1,2}$/,
   !CSS.supports('color', 'hwb(1 0% 0%)') && /^hwb\(/,
   !CSS.supports('color', 'rgb(1e2,0,0)') && /\de/,
@@ -86,7 +87,7 @@ class ColorSwatch {
     this.popup = ColorPicker(cm);
     if (!this.popup) {
       delete CM_EVENTS.mousedown;
-      document.head.appendChild(document.createElement('style')).textContent = `
+      document.head.appendChild($tag('style')).textContent = `
         .colorview-swatch::before {
           cursor: auto;
         }
@@ -138,8 +139,6 @@ CodeMirror.defineOption('colorpicker', false, (cm, value, oldValue) => {
     cm.state.colorpicker = new ColorSwatch(cm, value);
   }
 });
-
-CodeMirror.prototype.getStyleAtPos = getStyleAtPos;
 
 //endregion
 //region Colorizing
@@ -322,7 +321,7 @@ function colorizeLine(state, lineHandle) {
     if (m) {
       cmtEnd += m.index + m[1].length;
       cm.getTokenTypeAt({line: state.line, ch: 0});
-      const {index} = getStyleAtPos({styles: lineHandle.styles, pos: cmtEnd}) || {};
+      const index = getStyleAtPos(lineHandle.styles, cmtEnd, 1);
       colorizeLineViaStyles(state, lineHandle, Math.max(1, index || 0));
       return;
     }
@@ -402,7 +401,7 @@ function colorizeLineViaStyles(state, lineHandle, styleIndex = 1) {
     state.cm.markText({line, ch: start}, {line, ch: end}, {
       className: COLORVIEW_CLASS,
       startStyle: COLORVIEW_SWATCH_CLASS,
-      css: COLORVIEW_SWATCH_CSS + colorValue,
+      css: COLORVIEW_SWATCH_PROP + ':' + colorValue,
       color,
     });
   }
@@ -447,7 +446,7 @@ function colorizeLineViaStyles(state, lineHandle, styleIndex = 1) {
     span.line = state.line;
     span.index = spanIndex - 1;
     span.marker.color = color;
-    span.marker.css = COLORVIEW_SWATCH_CSS + colorValue;
+    span.marker.css = COLORVIEW_SWATCH_PROP + ':' + colorValue;
   }
 
   function removeDeadSpans() {
@@ -558,10 +557,10 @@ function makePalette({cm, options}) {
       const str = data.join(', ');
       let el = old.get(color);
       if (!el) {
-        el = document.createElement('div');
+        el = $tag('div');
         el.__color = color; // also used in color-picker.js
         el.className = COLORVIEW_SWATCH_CLASS;
-        el.style.setProperty(`--${COLORVIEW_SWATCH_CLASS}`, color);
+        el.style.setProperty(COLORVIEW_SWATCH_PROP, color);
       }
       if (el.__str !== str) {
         el.__str = str;
@@ -572,7 +571,7 @@ function makePalette({cm, options}) {
       }
       res.push(el);
     }
-    res.push(Object.assign(document.createElement('span'), {
+    res.push(Object.assign($tag('span'), {
       className: 'colorpicker-palette-hint',
       title: options.popup.paletteHint,
       textContent: '?',
@@ -621,7 +620,7 @@ function findNearestColor({styles, text}, pos) {
   while ((m = RX_DETECT.exec(text))) {
     start = m.index + m[1].length;
     const token = m[2].toLowerCase();
-    const {style} = getStyleAtPos({styles, pos: start + 1}) || {};
+    const style = getStyleAtPos(styles, start + 1, 0);
     const allowed = !style || ALLOWED_STYLES.includes(style.split(' ', 1)[0]);
     if (!allowed) {
       color = '';
@@ -662,7 +661,7 @@ function highlightColor(state, data) {
     const funcEnd = data.ch + data.color.indexOf('(') - 1;
     last = cm.charCoords({line, ch: funcEnd});
   }
-  const el = document.createElement('div');
+  const el = $tag('div');
   const DURATION_SEC = .5;
   el.style = `
     position: absolute;
@@ -675,41 +674,6 @@ function highlightColor(state, data) {
   `;
   document.body.appendChild(el);
   setTimeout(() => el.remove(), DURATION_SEC * 1000);
-}
-
-function getStyleAtPos({
-  line,
-  styles = this.getLineHandle(line).styles,
-  pos,
-}) {
-  if (pos < 0 || !styles) return;
-  const len = styles.length;
-  const end = styles[len - 2];
-  if (pos > end) return;
-  if (pos === end) {
-    return {
-      style: styles[len - 1],
-      index: len - 2,
-    };
-  }
-  const mid = (pos / end * (len - 1) & ~1) + 1;
-  let a = mid;
-  let b;
-  while (a > 1 && styles[a] > pos) {
-    b = a;
-    a = (a / 2 & ~1) + 1;
-  }
-  if (!b) b = mid;
-  while (b < len && styles[b] < pos) b = ((len + b) / 2 & ~1) + 1;
-  while (a < b - 3) {
-    const c = ((a + b) / 2 & ~1) + 1;
-    if (styles[c] > pos) b = c; else a = c;
-  }
-  while (a < len && styles[a] < pos) a += 2;
-  return {
-    style: styles[a + 1],
-    index: a,
-  };
 }
 
 

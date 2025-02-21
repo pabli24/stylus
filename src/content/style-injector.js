@@ -1,4 +1,4 @@
-import * as msgApi from '/js/msg-api';
+import * as msgApi from '@/js/msg-api';
 
 // allows Terser to drop unused code in targeted builds
 export const FF = __.BUILD !== 'chrome' && msgApi.FF;
@@ -7,10 +7,11 @@ const PREFIX = CLASS + '-';
 const MEDIA = 'screen, ' + PREFIX;
 const PATCH_ID = 'transition-patch';
 const kAss = 'adoptedStyleSheets';
-export const own = /** @type {Injection} */{
+export const own = /** @type {Injection.Response} */{
   cfg: {off: false, top: ''},
 };
-export const ownId = chrome.runtime.id;
+export const runtime = chrome.runtime;
+export const ownId = runtime.id;
 export const isXml = !__.ENTRY && document instanceof XMLDocument;
 const wrappedDoc = __.BUILD !== 'chrome' && FF && document.wrappedJSObject
   || document;
@@ -20,12 +21,13 @@ const ORDERED_TAGS = new Set(['head', 'body', 'frameset', !__.ENTRY && 'style', 
 const docRewriteObserver = !__.ENTRY && RewriteObserver(updateRoot);
 const docRootObserver = RootObserver(restoreOrder);
 const toSafeChar = c => String.fromCharCode(0xFF00 + c.charCodeAt(0) - 0x20);
-/** @type {InjectedStyle[]} */
+/** @type {Injection.Sections[]} */
 export const list = [];
+const randomIds = {};
 const calcOrder = ({id}) => orderPrio[id] * 1e6 || orderMain[id] || id + .5e6;
 const compare = (a, b) => calcOrder(a) - calcOrder(b);
-/** @type {Map<number,InjectedStyle>} */
-const table = new Map();
+/** @type {Map<number,Injection.Sections>} */
+export const table = new Map();
 /** @type {CSSStyleSheet[]} V1: frozen array in old Chrome, the reference changes */
 let ass;
 /** @type {CSSStyleSheet[]} V2: mutable array, the reference doesn't change */
@@ -43,7 +45,7 @@ let reorderStart = 0;
 // will store the original method refs because the page can override them
 let creationDoc, createElement, createElementNS;
 let orderPrio, orderMain;
-export let onInjectorUpdate, orphanCheck;
+export let onInjectorUpdate, selfDestruct;
 
 export function shutdown() {
   if (!list.length) return;
@@ -122,17 +124,19 @@ export function apply({cfg, sections}, isReplace) {
   const ids = isReplace && new Set();
   for (const style of sections) {
     const {id, code} = style;
+    const codeStr = Array.isArray(code)
+      ? style.code = code.join('')
+      : code;
     const old = table.get(id);
     if (!old) {
       style.el = createStyle(style);
       table.set(id, style);
       const i = list.findIndex(item => calcOrder(item) > calcOrder(style));
       list.splice(i < 0 ? list.length : i, 0, style);
-    } else if (old.code.length !== code.length
-      || old.code.some(arrItemDiff, code)
+    } else if (old.code !== codeStr
       || exposeStyleName && old.name !== style.name
     ) {
-      old.code = code;
+      old.code = codeStr;
       setTextAndName(old.el, style);
       old.el.disabled = false;
     }
@@ -155,12 +159,12 @@ function applyTransitionPatch(styles) {
   // the browsers, especially Firefox, may apply all transitions on page load
   if (document.readyState === 'complete' ||
       document.visibilityState === 'hidden' ||
-      !styles.some(s => s.code.some(c => c.includes('transition')))) {
+      !styles.some(s => s.code.includes('transition'))) {
     return;
   }
   const el = createStyle({
     id: PATCH_ID,
-    code: [':not(#\\0):not(#\\0) { transition: none !important }'],
+    code: ':not(#\\0):not(#\\0) { transition: none !important }',
   });
   addElement(el);
   // wait for the next paint to complete
@@ -168,15 +172,12 @@ function applyTransitionPatch(styles) {
   requestAnimationFrame(() => setTimeout(removeElement, 0, el));
 }
 
-/** @this {Array} array to compare to */
-function arrItemDiff(c, i) {
-  return c !== this[i];
-}
-
 function createStyle(style) {
   let el;
   let {id} = style;
   if (ass) {
+    if (!exposeStyleName)
+      id = randomIds[id] ??= Math.random().toString(36).slice(2);
     id = MEDIA + id;
     el = new CSSStyleSheet({media: id});
     setTextAndName(el, style);
@@ -198,12 +199,10 @@ function createStyle(style) {
     // HTML document style; also works on HTML-embedded SVG
     el = createElement('style');
   }
-  if (id) {
-    el.id = `${PREFIX}${id}`;
-    document.getElementById(el.id)?.remove();
-  }
-  el.nonce = nonce;
-  el.type = 'text/css';
+  if (nonce)
+    el.nonce = nonce;
+  if (id && exposeStyleName) // not exposing it by default to reduce fingerprint
+    id = el.id = `${PREFIX}${id}`;
   // SVG className is not a string, but an instance of SVGAnimatedString
   el.classList.add(CLASS);
   setTextAndName(el, style);
@@ -212,7 +211,6 @@ function createStyle(style) {
 
 function setTextAndName(el, {id, code, name}) {
   if (ass) {
-    code = code.join(''); // TODO: only patch the changed cssRule?
     try {
       el.replaceSync(code);
     } catch {
@@ -222,23 +220,15 @@ function setTextAndName(el, {id, code, name}) {
   }
   if (exposeStyleName && name) {
     if (el.dataset.name !== name) el.dataset.name = name;
-    name = encodeURIComponent(name.replace(/[?#/']/g, toSafeChar));
-    code = code.concat(`\n/*# sourceURL=${chrome.runtime.getURL(name)}.user.css#${id}${
-      window !== top ? '#' + Math.random().toString(36).slice(2) : '' // https://crbug.com/1298600
-    } */`);
+    if (!FF) { // Firefox doesn't support sourceURL comment in CSS
+      name = encodeURIComponent(name.replace(/[?#/']/g, toSafeChar));
+      code += `\n/*# sourceURL=${runtime.getURL(name)}.user.css#${id}${
+        window !== top ? '#' + Math.random().toString(36).slice(2) : '' // https://crbug.com/1298600
+      } */`;
+    }
   }
-  if (ffCsp) {
-    el.textContent = code.join('');
-    return;
-  }
-  let i, len, n;
-  for (i = 0, len = code.length, n = el.firstChild; n; i++, n = n.nextSibling) {
-    /* The surplus nodes are cleared to trigger the less frequently observed `characterData` mutations,
-       and anyway it's often due to a typo/mistake while editing, which will be fixed soon */
-    if (i >= len) n.nodeValue = '';
-    else if (n.nodeValue !== code[i]) n.nodeValue = code[i];
-  }
-  if (i < len) el.append(...code.slice(i));
+  // Reusing the text node to trigger a CharacterData mutation which is less frequently observed
+  (el.firstChild || el).textContent = code;
 }
 
 function toggleObservers(shouldStart) {
@@ -283,7 +273,7 @@ function initCreationDoc(style) {
     }
     if (!retry || ffCsp) {
       try {
-        el = addElement(createStyle({code: ['a:not(a){}']}));
+        el = addElement(createStyle({code: 'a:not(a){}'}));
         ok = el.sheet;
         removeElement(el);
         if (ok) return;
@@ -308,7 +298,8 @@ function removeStyle(style) {
 }
 
 function restoreOrder(mutations) {
-  if (!orphanCheck()) return;
+  if (!runtime.id)
+    return selfDestruct();
   let bad;
   let el = list.length && list[0].el;
   if (!el) {
@@ -371,7 +362,8 @@ export function updateConfig(cfg) {
 }
 
 function updateRoot() {
-  if (!orphanCheck()) return;
+  if (!runtime.id)
+    return selfDestruct();
   // Known to change mysteriously in iframes without triggering RewriteObserver
   if (root !== document.documentElement) {
     root = document.documentElement;

@@ -1,12 +1,12 @@
-import {kDisableAll} from '/js/consts';
-import {subscribe, __values as __prefs} from '/js/prefs';
-import {CHROME, FIREFOX, MOBILE, VIVALDI} from '/js/ua';
-import {debounce} from '/js/util';
-import {ignoreChromeError, MF_ICON_EXT, MF_ICON_PATH} from '/js/util-webext';
+import {kDisableAll, kStyleIds} from '@/js/consts';
+import {__values as __prefs, subscribe} from '@/js/prefs';
+import {CHROME, FIREFOX, MOBILE, VIVALDI} from '@/js/ua';
+import {debounce, t} from '@/js/util';
+import {ignoreChromeError, MF_ICON_EXT, MF_ICON_PATH} from '@/js/util-webext';
 import * as colorScheme from './color-scheme';
-import {bgBusy} from './common';
+import {bgBusy, bgInit, onSchemeChange, onUnload} from './common';
 import {removePreloadedStyles} from './style-via-webrequest';
-import * as tabMan from './tab-manager';
+import tabCache, * as tabMan from './tab-manager';
 
 const browserAction = (__.MV3 ? chrome.action : chrome.browserAction) || {};
 const staleBadges = new Set();
@@ -27,46 +27,55 @@ const kShowBadge = 'show-badge';
 // https://github.com/openstyles/stylus/issues/335
 let hasCanvas = FIREFOX_ANDROID ? false : null;
 
+bgInit.push(initIcons);
+onSchemeChange.add(() => {
+  if (__prefs[kIconset] === -1) {
+    debounce(refreshGlobalIcon);
+    debounce(refreshAllIcons);
+  }
+});
 
-bgBusy.then(() => {
-  colorScheme.onChange(() => {
-    if (__prefs[kIconset] === -1) {
-      debounce(refreshGlobalIcon);
-    }
-  }, !__.MV3);
+export async function refreshIconsWhenReady() {
+  if (bgBusy) {
+    bgInit[bgInit.indexOf(initIcons)] = 0;
+    await bgBusy;
+  }
+  initIcons(true);
+}
+
+function initIcons(runNow = !__.MV3) {
   subscribe([
     kDisableAll,
     kBadgeDisabled,
     kBadgeNormal,
-  ], () => debounce(refreshIconBadgeColor), true);
+  ], () => debounce(refreshIconBadgeColor), runNow);
   subscribe([
     kShowBadge,
-  ], () => debounce(refreshAllIconsBadgeText), true);
+  ], () => debounce(refreshAllIconsBadgeText), runNow);
   subscribe([
     kDisableAll,
     kIconset,
-  ], () => debounce(refreshAllIcons), true);
-});
+  ], () => debounce(refreshAllIcons), runNow);
+}
 
-tabMan.onUnload.add((tabId, frameId, port) => {
-  if (frameId && tabMan.getStyleIds(tabId)) {
-    updateIconBadge.call(port, [], {lazyBadge: true});
+onUnload.add((tabId, frameId, port) => {
+  if (frameId && tabCache[tabId]?.[kStyleIds]) {
+    updateIconBadge.call(port, [], true);
   }
 });
 
 /**
  * @param {(number|string)[]} styleIds
- * @param {{}} opts
- * @param {boolean} [opts.lazyBadge=false] preventing flicker during page load
- * @param {number} [opts.iid] - instance id
+ * @param {boolean} [lazyBadge] preventing flicker during page load
+ * @param {number} [iid] instance id
  */
-export function updateIconBadge(styleIds, {lazyBadge, iid} = {}) {
+export function updateIconBadge(styleIds, lazyBadge, iid) {
   // FIXME: in some cases, we only have to redraw the badge. is it worth a optimization?
   const {tab: {id: tabId}, TDM} = this.sender;
   const frameId = TDM > 0 ? 0 : this.sender.frameId;
   const value = styleIds.length ? styleIds.map(Number) : undefined;
-  tabMan.set(tabId, 'styleIds', frameId, value);
-  if (iid) tabMan.set(tabId, 'iid', frameId, iid);
+  tabMan.set(tabId, kStyleIds, frameId, value);
+  if (iid) tabMan.set(tabId, 'iid', frameId, value && iid);
   debounce(refreshStaleBadges, frameId && lazyBadge ? 250 : 0);
   staleBadges.add(tabId);
   if (!frameId) refreshIcon(tabId, true);
@@ -82,7 +91,8 @@ export function overrideBadge({text = '', color = '', title = ''} = {}) {
   badgeOvr.color = color;
   refreshIconBadgeColor();
   setBadgeText({text});
-  for (const tabId of tabMan.keys()) {
+  for (let tabId in tabCache) {
+    tabId = +tabId;
     if (text) {
       setBadgeText({tabId, text});
     } else {
@@ -90,7 +100,7 @@ export function overrideBadge({text = '', color = '', title = ''} = {}) {
     }
   }
   safeCall('setTitle', {
-    title: title && chrome.i18n.getMessage(title) || title || '',
+    title: title && t(title, '', false) || title || '',
   });
 }
 
@@ -108,10 +118,10 @@ function getIconName(hasStyles = false) {
 }
 
 function refreshIcon(tabId, force = false) {
-  const oldIcon = tabMan.get(tabId, 'icon');
-  const newIcon = getIconName(tabMan.getStyleIds(tabId)[0]);
+  const td = tabCache[tabId] || {};
+  const oldIcon = td.icon;
+  const newIcon = getIconName(td[kStyleIds]?.[0]);
   // (changing the icon only for the main page, frameId = 0)
-
   if (!force && oldIcon === newIcon) {
     return;
   }
@@ -135,8 +145,8 @@ function getIconPath(icon) {
 /** @return {number | ''} */
 function getStyleCount(tabId) {
   const allIds = new Set();
-  const data = tabMan.getStyleIds(tabId) || {};
-  Object.values(data).forEach(frameIds => frameIds.forEach(id => allIds.add(id)));
+  for (const frameData of Object.values(tabCache[tabId]?.[kStyleIds] || {}))
+    frameData.forEach(allIds.add, allIds);
   return allIds.size || '';
 }
 
@@ -154,7 +164,7 @@ async function loadImage(url) {
   const {width: w, height: h} = img;
   const canvas = __.MV3 || OffscreenCanvas
     ? new OffscreenCanvas(w, h)
-    : Object.assign(document.createElement('canvas'), {width: w, height: h});
+    : Object.assign($tag('canvas'), {width: w, height: h});
   const ctx = canvas.getContext('2d');
   ctx.drawImage(img, 0, 0, w, h);
   const result = ctx.getImageData(0, 0, w, h);
@@ -176,15 +186,15 @@ function refreshIconBadgeColor() {
 }
 
 function refreshAllIcons() {
-  for (const tabId of tabMan.keys()) {
-    refreshIcon(tabId);
+  for (const tabId in tabCache) {
+    refreshIcon(+tabId);
   }
   refreshGlobalIcon();
 }
 
 function refreshAllIconsBadgeText() {
-  for (const tabId of tabMan.keys()) {
-    refreshIconBadgeText(tabId);
+  for (const tabId in tabCache) {
+    refreshIconBadgeText(+tabId);
   }
 }
 

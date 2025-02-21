@@ -1,33 +1,30 @@
-import {UCD} from '/js/consts';
-import {$, $$} from '/js/dom';
+import {kStyleIdPrefix, UCD} from '@/js/consts';
+import {$toggleClasses} from '@/js/dom';
 import {
-  animateElement, configDialog, getEventKeyName, messageBox, scrollElementIntoView,
-} from '/js/dom-util';
-import {t} from '/js/localization';
-import {API, onExtension} from '/js/msg';
-import {debounce, sessionStore} from '/js/util';
-import {browserWindows, getOwnTab} from '/js/util-webext';
+  animateElement, configDialog, getEventKeyName, messageBox, scrollElementIntoView, setHocus,
+} from '@/js/dom-util';
+import {onMessage} from '@/js/msg';
+import {API} from '@/js/msg-api';
+import {sessionStore, t} from '@/js/util';
+import {browserWindows, getOwnTab} from '@/js/util-webext';
 import {filterAndAppend, showFiltersStats} from './filters';
 import {createStyleElement, createTargetsElement, renderFavs, updateTotal} from './render';
 import * as sorter from './sorter';
 import {checkUpdate, handleUpdateInstalled} from './updater-ui';
-import {
-  $entry, installed, newUI, objectDiff, queue, removeStyleCode, styleToDummyEntry,
-} from './util';
+import {installed, newUI, objectDiff, queue, styleToDummyEntry} from './util';
 
 for (const a of $$('#header a[href^="http"]')) a.onclick = openLink;
 installed.on('click', onEntryClicked);
 installed.on('contextmenu', onEntryClicked);
 window.on('pageshow', handleVisibilityChange);
 window.on('pagehide', handleVisibilityChange);
-onExtension(m => {
+onMessage.set(m => {
   switch (m.method) {
     case 'styleUpdated':
     case 'styleAdded':
     case 'styleDeleted':
       queue.push(m);
-      if (!queue.time) handleBulkChange(queue);
-      else debounce(handleBulkChange, queue.THROTTLE);
+      queue.p ??= Promise.resolve().then(handleBulkChange);
   }
 });
 
@@ -68,12 +65,11 @@ const ENTRY_ROUTES = {
     if (button === 0) {
       API.styles.remove(id);
     }
-    const deleteButton = $('#message-box-buttons > button');
-    if (deleteButton) deleteButton.removeAttribute('data-focused-via-click');
+    setHocus($('#message-box-buttons > button'), false);
   },
 
-  '.configure-usercss'(event, {styleMeta}) {
-    configDialog(styleMeta);
+  '.configure-usercss'(event, {styleId}) {
+    configDialog(styleId);
   },
 
   [SEL_EXPANDER]: expandTargets,
@@ -90,7 +86,7 @@ async function edit(event, entry) {
   event.preventDefault();
   event.stopPropagation();
   const key = getEventKeyName(event);
-  const url = $('[href]', entry).href;
+  const url = entry.$('[href]').href;
   const ownTab = await getOwnTab();
   if (key === 'MouseL') {
     sessionStore['manageStylesHistory' + ownTab.id] = url;
@@ -110,7 +106,7 @@ function expandTargets(event, entry) {
   if (event.type === 'contextmenu') {
     event.preventDefault();
     const ex = '.expanded';
-    $$(`.has-more${$(ex, entry) ? ex : `:not(${ex})`} .expander`)
+    $$(`.has-more${entry.$(ex) ? ex : `:not(${ex})`} .expander`)
       .forEach(el => el.click());
     return;
   }
@@ -147,30 +143,30 @@ export function onEntryClicked(event) {
   }
 }
 
-export function handleBulkChange(q = queue) {
-  for (const msg of q) {
+export function handleBulkChange() {
+  for (const msg of queue) {
     const {id} = msg.style;
     let fullStyle;
     if (msg.method === 'styleDeleted') {
       handleDelete(id);
-    } else if (msg.reason === 'import' && (fullStyle = q.styles.get(id))) {
+    } else if (msg.reason === 'import' && (fullStyle = queue.styles.get(id))) {
       handleUpdate(fullStyle, msg);
-      q.styles.delete(id);
+      queue.styles.delete(id);
     } else {
       handleUpdateForId(id, msg);
     }
   }
   sorter.updateStripes({onlyWhenColumnsChanged: true});
-  q.time = performance.now();
-  q.length = 0;
+  queue.p = null;
+  queue.length = 0;
 }
 
 function handleDelete(id) {
-  const node = $entry(id);
+  const node = $id(kStyleIdPrefix + id);
   if (node) {
     node.remove();
     if (node.matches('.can-update')) {
-      const btnApply = $('#apply-all-updates');
+      const btnApply = $id('apply-all-updates');
       btnApply.dataset.value = Number(btnApply.dataset.value) - 1;
     }
     showFiltersStats();
@@ -181,7 +177,7 @@ function handleDelete(id) {
 function handleUpdate(style, {reason, method} = {}) {
   if (reason === 'editPreview' || reason === 'editPreviewEnd') return;
   let entry;
-  let oldEntry = $entry(style);
+  let oldEntry = $id(kStyleIdPrefix + style.id);
   if (oldEntry && method === 'styleUpdated') {
     handleToggledOrCodeOnly();
   }
@@ -206,7 +202,6 @@ function handleUpdate(style, {reason, method} = {}) {
   renderFavs(entry);
 
   function handleToggledOrCodeOnly() {
-    removeStyleCode(style);
     const diff = objectDiff(oldEntry.styleMeta, style)
       .filter(({key, path}) => path || !/^_|(Date|Digest|Md5)$/.test(key));
     if (diff.length === 0) {
@@ -215,9 +210,9 @@ function handleUpdate(style, {reason, method} = {}) {
       oldEntry = null;
     }
     if (diff.length === 1 && diff[0].key === 'enabled') {
-      oldEntry.classList.toggle('enabled', style.enabled);
-      oldEntry.classList.toggle('disabled', !style.enabled);
-      $$('input', oldEntry).forEach(el => (el.checked = style.enabled));
+      const isOn = style.enabled;
+      $toggleClasses(oldEntry, {enabled: isOn, disabled: !isOn});
+      for (const el of oldEntry.$$('input')) el.checked = isOn;
       oldEntry.styleMeta = style;
       entry = oldEntry;
       oldEntry = null;
@@ -226,7 +221,7 @@ function handleUpdate(style, {reason, method} = {}) {
 }
 
 async function handleUpdateForId(id, opts) {
-  handleUpdate(await API.styles.get(id), opts);
+  handleUpdate(await API.styles.getCore({id, sections: true, size: true}), opts);
 }
 
 export function handleVisibilityChange(e) {

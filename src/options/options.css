@@ -2,7 +2,6 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 100vh;
   background: none;
   --pad: 1rem;
   --pad05: calc(.5 * var(--pad));
@@ -13,10 +12,9 @@ body {
   background: none;
   display: flex;
   flex-direction: column;
-  width: auto;
-  min-width: 400px; /* showing almost everything in one line in English and CJK */
-  max-width: 800px;
-  max-height: calc(100vh - 32px);
+  max-width: 850px;
+  max-height: var(--100dvh);
+  box-sizing: border-box;
   border: 1px solid var(--c60);
   box-shadow: 0px 5px 15px 3px hsla(0, 0%, 0%, .35);
 }
@@ -149,6 +147,7 @@ input[type=time] {
   margin-left: 0;
 }
 
+.mobile .desktop-only,
 label.disabled,
 #favs.disabled + label {
   color: var(--c65);
@@ -200,18 +199,6 @@ a.icon {
   }
   &:hover > i {
     color: var(--fg);
-  }
-}
-
-#message-box.note {
-  align-items: center;
-  justify-content: center;
-  white-space: pre-wrap;
-  > div {
-    max-width: 40em;
-    top: unset;
-    right: unset;
-    position: relative;
   }
 }
 

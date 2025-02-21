@@ -1,9 +1,8 @@
-import {$, $$, $create} from '/js/dom';
-import {messageBox} from '/js/dom-util';
-import {t} from '/js/localization';
-import {API} from '/js/msg';
-import * as prefs from '/js/prefs';
-import {debounce} from '/js/util';
+import {$create} from '@/js/dom';
+import {messageBox} from '@/js/dom-util';
+import {API} from '@/js/msg-api';
+import * as prefs from '@/js/prefs';
+import {debounce, t} from '@/js/util';
 import {fitNameColumn, fitSizeColumn} from './render';
 import * as router from './router';
 import {updateStripes} from './sorter';
@@ -24,16 +23,14 @@ router.watch({search: [fltSearch, fltMode]}, ([search, mode]) => {
   const firstRun = !elSearch;
   if (firstRun) initFilters();
   elSearch.value = search || '';
-  if (mode || elSearchMode.value === 'url') {
-    elSearchMode.value = mode || prefs.get(fltModePref);
-  }
+  elSearchMode.value = mode || prefs.__values[fltModePref];
   if (firstRun) filterOnChange({forceRefilter: true});
   else searchStyles();
 });
 
 function initFilters() {
-  elSearch = $('#search');
-  elSearchMode = $('#' + fltModePref);
+  elSearch = $id('search');
+  elSearchMode = $id(fltModePref);
   elSearchMode.on('change', e => {
     if (elSearchMode.value === 'url') { // `url` mode shouldn't be saved
       e.stopPropagation();
@@ -42,7 +39,7 @@ function initFilters() {
   elSearch.oninput = () => router.updateSearch(fltSearch, elSearch.value);
   elSearchMode.oninput = () => router.updateSearch(fltMode, elSearchMode.value);
 
-  $('#search-help').onclick = event => {
+  $id('search-help').onclick = event => {
     event.preventDefault();
     messageBox.show({
       className: 'help-text center-dialog',
@@ -64,7 +61,7 @@ function initFilters() {
   };
 
   $$('select[id$=".invert"]').forEach(el => {
-    const slave = $('#' + el.id.replace('.invert', ''));
+    const slave = $id(el.id.replace('.invert', ''));
     const slaveData = slave.dataset;
     const valueMap = new Map([
       [false, slaveData.filter],
@@ -103,7 +100,7 @@ function initFilters() {
     }
   });
 
-  $('#reset-filters').onclick = event => {
+  $('#stats a').onclick = event => {
     event.preventDefault();
     if (!filtersSelector.hide) {
       return;
@@ -123,7 +120,7 @@ function initFilters() {
       }
     }
     if (elSearchMode.value === 'url') {
-      elSearchMode.value = prefs.get(fltModePref);
+      elSearchMode.value = prefs.__values[fltModePref];
     }
     filterOnChange({forceRefilter: true});
     router.updateSearch({[fltSearch]: '', [fltMode]: ''});
@@ -157,23 +154,22 @@ function filterOnChange({target, forceRefilter, alreadySearched}) {
 
 export function filterAndAppend({entry, container}) {
   if (!container) {
-    container = [entry];
-    // reverse the visibility, otherwise reapplyFilter will see no need to work
-    if (!filtersSelector.hide || !entry.matches(filtersSelector.hide)) {
-      entry.classList.add('hidden');
-    }
     fitNameColumn(undefined, entry.styleMeta);
     fitSizeColumn(undefined, entry);
   }
-  return reapplyFilter(container);
+  return reapplyFilter(container || [entry], undefined, entry);
 }
 
 /**
  * @returns {Promise} resolves on async search
  */
-async function reapplyFilter(container = installed, alreadySearched) {
+async function reapplyFilter(container = installed, alreadySearched, entry) {
   if (!alreadySearched && elSearch.value.trim()) {
     await searchStyles({immediately: true, container});
+  }
+  // reverse the visibility, otherwise reapplyFilter will see no need to work
+  if (entry && (!filtersSelector.hide || !entry.matches(filtersSelector.hide))) {
+    entry.classList.add('hidden');
   }
   // A: show
   let toHide = [];
@@ -189,7 +185,7 @@ async function reapplyFilter(container = installed, alreadySearched) {
     return;
   }
   // filtering needed or a single-element job from handleUpdate()
-  for (const entry of toUnhide.children || toUnhide) {
+  for (entry of toUnhide.children || toUnhide) {
     if (!entry.parentNode) {
       installed.appendChild(entry);
     }
@@ -205,7 +201,7 @@ async function reapplyFilter(container = installed, alreadySearched) {
     showFiltersStats();
     return;
   }
-  for (const entry of toHide) {
+  for (entry of toHide) {
     entry.classList.add('hidden');
   }
   // showStyles() is building the page with filters active so we need to:
@@ -235,25 +231,24 @@ async function reapplyFilter(container = installed, alreadySearched) {
         (el.matches(selector) ? toUnhide : toHide).push(el);
       }
     } else if (hide) {
-      toHide = [...$$(selector, container)];
+      toHide = [...container.$$(selector)];
     } else {
-      toUnhide = [...$$(selector, container)];
+      toUnhide = [...container.$$(selector)];
     }
   }
 }
 
 export function showFiltersStats() {
   const active = filtersSelector.hide !== '';
-  $('#filters summary').classList.toggle('active', active);
-  $('#reset-filters').disabled = !active;
   const numTotal = installed.childElementCount;
   const numHidden = installed.getElementsByClassName('entry hidden').length;
   const numShown = numTotal - numHidden;
+  $id('header').classList.toggle('filtered', active);
   if (filtersSelector.numShown !== numShown ||
       filtersSelector.numTotal !== numTotal) {
     filtersSelector.numShown = numShown;
     filtersSelector.numTotal = numTotal;
-    $('#filters-stats').textContent = t('filteredStyles', [numShown, numTotal]);
+    $('#stats span').textContent = t('filteredStyles', [numShown, numTotal]);
     document.body.classList.toggle('all-styles-hidden-by-filters',
       !numShown && numTotal && filtersSelector.hide);
   }

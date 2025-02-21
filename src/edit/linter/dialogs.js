@@ -1,9 +1,8 @@
-import {getLZValue, LZ_KEY, setLZValue} from '/js/chrome-sync';
-import {kAppJson} from '/js/consts';
-import {$, $create, $createLink} from '/js/dom';
-import {messageBox} from '/js/dom-util';
-import {t} from '/js/localization';
-import {tryJSONparse} from '/js/util';
+import {getLZValue, LZ_KEY, setLZValue} from '@/js/chrome-sync';
+import {kAppJson} from '@/js/consts';
+import {$create, $createLink} from '@/js/dom';
+import {messageBox} from '@/js/dom-util';
+import {t, tryJSONparse} from '@/js/util';
 import editor from '../editor';
 import {helpPopup, showCodeMirrorPopup, worker} from '../util';
 import {DEFAULTS} from './defaults';
@@ -25,8 +24,7 @@ export async function showLintConfig() {
   if (!linter) {
     return;
   }
-  // TODO: replace with JSON.parse()
-  await import('/js/jsonlint-bundle');
+  await import('@/cm/jsonlint-bundle');
   const config = await getLZValue(LZ_KEY[linter]);
   const defaults = DEFAULTS[linter];
   const title = t('linterConfigPopupTitle', isStylelint ? 'Stylelint' : 'CSSLint');
@@ -128,7 +126,7 @@ export async function showLintHelp() {
   }
   const header = t('linterIssuesHelp', '\x01').split('\x01');
   helpPopup.show(t('linterIssues'),
-    $create([
+    $create('div', [
       header[0], headerLink, header[1],
       $create('ul.rules', getActiveRules().map(makeItem)),
       $create('button', {onclick: showLintConfig}, t('configureStyle')),
@@ -270,7 +268,7 @@ async function showLinterErrorMessage(title, contents) {
 }
 
 function updateConfigButtons() {
-  $('.save', popup).disabled = cmDlg.isClean();
-  $('.reset', popup).disabled = cmDlg.getValue() === defaultConfig[linter];
-  $('.cancel', popup).textContent = t(cmDlg.isClean() ? 'confirmClose' : 'confirmCancel');
+  popup.$('.save').disabled = cmDlg.isClean();
+  popup.$('.reset').disabled = cmDlg.getValue() === defaultConfig[linter];
+  popup.$('.cancel').textContent = t(cmDlg.isClean() ? 'confirmClose' : 'confirmCancel');
 }

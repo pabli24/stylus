@@ -1,16 +1,17 @@
-import compareVersion from '/js/cmpver';
-import {UCD} from '/js/consts';
-import {API} from '/js/msg';
-import * as prefs from '/js/prefs';
-import {calcStyleDigest, styleSectionsEqual} from '/js/sections-util';
-import {chromeLocal} from '/js/storage-util';
-import {extractUsoaId, isLocalhost, usoApi} from '/js/urls';
-import {debounce, deepMerge} from '/js/util';
-import {ignoreChromeError} from '/js/util-webext';
-import {bgBusy, safeTimeout} from './common';
+import compareVersion from '@/js/cmpver';
+import {UCD} from '@/js/consts';
+import * as prefs from '@/js/prefs';
+import {calcStyleDigest, styleSectionsEqual} from '@/js/sections-util';
+import {chromeLocal} from '@/js/storage-util';
+import {extractUsoaId, isCdnUrl, isLocalhost, rxGF, usoApi} from '@/js/urls';
+import {debounce, deepMerge, getHost, sleep} from '@/js/util';
+import {ignoreChromeError} from '@/js/util-webext';
+import {bgBusy} from './common';
 import {db} from './db';
 import download from './download';
 import * as styleMan from './style-manager';
+import * as usercssMan from './usercss-manager';
+import {getEmbeddedMeta, toUsercss} from './uso-api';
 
 const STATES = /** @namespace UpdaterStates */ {
   UPDATED: 'updated',
@@ -27,6 +28,8 @@ const STATES = /** @namespace UpdaterStates */ {
   ERROR_VERSION: 'error: version is older than installed style',
 };
 export const getStates = () => STATES;
+const NOP = () => {};
+const safeSleep = __.MV3 ? ms => __.KEEP_ALIVE(sleep(ms)) : sleep;
 const RH_ETAG = {responseHeaders: ['etag']}; // a hashsum of file contents
 const RX_DATE2VER = new RegExp([
   /^(\d{4})/,
@@ -41,6 +44,8 @@ const RETRY_ERRORS = [
   503, // service unavailable
   429, // too many requests
 ];
+const HOST_THROTTLE = 1000; // ms
+const hostJobs = {};
 let lastUpdateTime;
 let checkingAll = false;
 let logQueue = [];
@@ -56,7 +61,7 @@ export async function checkAllStyles({
   save = true,
   ignoreDigest,
   observe,
-  onlyEnabled = prefs.get('updateOnlyEnabled'),
+  onlyEnabled = prefs.__values.updateOnlyEnabled,
 } = {}) {
   resetInterval();
   checkingAll = true;
@@ -160,7 +165,7 @@ export async function checkStyle(opts) {
     updateUrl = style.updateUrl = `${usoApi}Css/${usoId}`;
     const {result: css} = await tryDownload(updateUrl, {responseType: 'json'});
     const json = await updateUsercss(css)
-      || await API.uso.toUsercss(usoId, varsUrl, css, style, md5, md5Url);
+      || await toUsercss(usoId, varsUrl, css, style, md5, md5Url);
     json.originalMd5 = md5;
     return json;
   }
@@ -168,21 +173,26 @@ export async function checkStyle(opts) {
   async function updateUsercss(css) {
     let oldVer = ucd.version;
     let oldEtag = style.etag;
-    const m2 = (css || extractUsoaId(updateUrl)) &&
-      await API.uso.getEmbeddedMeta(css || style.sourceCode);
-    if (m2 && m2.updateUrl) {
-      updateUrl = m2.updateUrl;
-      oldVer = m2[UCD].version || '0';
+    let m = (css || extractUsoaId(updateUrl)) &&
+      await getEmbeddedMeta(css || style.sourceCode);
+    if (m && m.updateUrl) {
+      updateUrl = m.updateUrl;
+      oldVer = m[UCD].version || '0';
       oldEtag = '';
     } else if (css) {
       return;
     }
+    /* Using the more efficient HEAD+GET approach for greasyfork instead of GET+GET,
+       because if ETAG header changes it normally means an update so we don't need to
+       download meta additionally in a separate request. */
+    if ((m = updateUrl.match(rxGF))[5] === 'meta')
+      updateUrl = m[1] + 'user' + m[6];
     if (oldEtag && oldEtag === await downloadEtag(updateUrl)) {
       return Promise.reject(STATES.SAME_CODE);
     }
     // TODO: when sourceCode is > 100kB use http range request(s) for version check
     const {headers: {etag}, response} = await tryDownload(updateUrl, RH_ETAG);
-    const json = await API.usercss.buildMeta({sourceCode: response, etag, updateUrl});
+    const json = await usercssMan.buildMeta({sourceCode: response, etag, updateUrl});
     const delta = compareVersion(json[UCD].version, oldVer);
     let err;
     if (!delta && !ignoreDigest) {
@@ -221,25 +231,34 @@ export async function checkStyle(opts) {
       return Promise.reject(STATES.MAYBE_EDITED);
     }
     return !save ? newStyle :
-      ucd ? API.usercss.install(newStyle, {dup: style})
+      ucd ? usercssMan.install(newStyle, {dup: style})
         : styleMan.install(newStyle);
   }
 
 }
 
-async function tryDownload(url, params, {retryDelay = 1000} = {}) {
+async function tryDownload(url, params, {retryDelay = HOST_THROTTLE} = {}) {
   while (true) {
+    let host, job;
     try {
       params = deepMerge(params || {}, {headers: {'Cache-Control': 'no-cache'}});
-      return await download(url, params);
+      host = getHost(url);
+      job = hostJobs[host];
+      job = hostJobs[host] = (job
+        ? job.catch(NOP).then(() => safeSleep(HOST_THROTTLE / (isCdnUrl(url) ? 4 : 1)))
+        : Promise.resolve()
+      ).then(() => download(url, params));
+      return await job;
     } catch (code) {
       if (!RETRY_ERRORS.includes(code) ||
           retryDelay > MIN_INTERVAL_MS) {
-        return Promise.reject(code);
+        throw code;
       }
+    } finally {
+      if (hostJobs[host] === job) delete hostJobs[host];
     }
     retryDelay *= 1.25;
-    await new Promise(resolve => safeTimeout(resolve, retryDelay));
+    await safeSleep(retryDelay);
   }
 }
 
@@ -257,7 +276,7 @@ function getDateFromVer(style) {
 }
 
 function schedule() {
-  const interval = prefs.get('updateInterval') * 60 * 60 * 1000;
+  const interval = prefs.__values.updateInterval * 60 * 60 * 1000;
   if (interval > 0) {
     const elapsed = Math.max(0, Date.now() - lastUpdateTime);
     chrome.alarms.create(ALARM_NAME, {
@@ -268,12 +287,15 @@ function schedule() {
   }
 }
 
-function onAlarm({name}) {
-  if (name === ALARM_NAME) __.KEEP_ALIVE(checkAllStyles());
+async function onAlarm({name}) {
+  if (name === ALARM_NAME) {
+    if (bgBusy) await bgBusy;
+    __.KEEP_ALIVE(checkAllStyles());
+  }
 }
 
 function resetInterval() {
-  chromeLocal.setValue('lastUpdateTime', lastUpdateTime = Date.now());
+  chromeLocal.set({lastUpdateTime: lastUpdateTime = Date.now()});
   schedule();
 }
 
@@ -298,7 +320,7 @@ async function flushQueue(lines) {
   lines.push(time + (logQueue[0] && logQueue[0].text || ''));
   lines.push(...logQueue.slice(1).map(item => item.text));
 
-  chromeLocal.setValue('updateLog', lines);
+  chromeLocal.set({updateLog: lines});
   logLastWriteTime = Date.now();
   logQueue = [];
 }

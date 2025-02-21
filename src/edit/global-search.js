@@ -1,11 +1,15 @@
-import colorMimicry from '/js/color/color-mimicry';
-import {$, $$, $create, $remove, toggleDataset} from '/js/dom';
-import {setInputValue} from '/js/dom-util';
-import {t, template} from '/js/localization';
-import {chromeLocal} from '/js/storage-util';
-import {debounce, stringAsRegExp, tryRegExp} from '/js/util';
-import CodeMirror from 'codemirror';
+import colorMimicry from '@/js/color/color-mimicry';
+import {kCodeMirror} from '@/js/consts';
+import {cssFieldSizing, $toggleDataset, $create} from '@/js/dom';
+import {setInputValue} from '@/js/dom-util';
+import {htmlToTemplateCache, templateCache} from '@/js/localization';
+import {chromeLocal} from '@/js/storage-util';
+import {debounce, stringAsRegExp, t, tryRegExp} from '@/js/util';
+import {CodeMirror} from '@/cm';
 import editor from './editor';
+import html from './global-search.html';
+
+htmlToTemplateCache(html);
 
 //region Constants and state
 
@@ -14,8 +18,8 @@ const ANNOTATE_SCROLLBAR_DELAY = 350;
 const ANNOTATE_SCROLLBAR_OPTIONS = {maxMatches: 10e3};
 const STORAGE_UPDATE_DELAY = 500;
 
-const DIALOG_SELECTOR = '#search-replace-dialog';
-const DIALOG_STYLE_SELECTOR = '#search-replace-dialog-style';
+const DLG_ID = 'search-replace-dialog';
+const DLG_STYLE_ID = 'search-replace-dialog-style';
 const TARGET_CLASS = 'search-target-editor';
 const MATCH_CLASS = 'search-target-match';
 const MATCH_TOKEN_NAME = 'searching';
@@ -93,7 +97,7 @@ const ACTIONS = {
     case() {
       stateIcase = !stateIcase;
       stateLastFind = '';
-      toggleDataset(this, 'enabled', !stateIcase);
+      $toggleDataset(this, 'enabled', !stateIcase);
       doSearch({canAdvance: false});
     },
   },
@@ -103,7 +107,7 @@ const EVENTS = {
   oninput() {
     stateFind = stateInput.value;
     debounce(doSearch, INCREMENTAL_SEARCH_DELAY, {canAdvance: false});
-    adjustTextareaSize(this);
+    if (!__.MV3 && !cssFieldSizing) adjustTextareaSize(this);
     if (!stateFind) enableReplaceButtons(false);
   },
   onkeydown(event) {
@@ -144,7 +148,7 @@ const INPUT_PROPS = {
 const INPUT2_PROPS = {
   oninput() {
     stateReplace = this.value;
-    adjustTextareaSize(this);
+    if (!__.MV3 && !cssFieldSizing) adjustTextareaSize(this);
     debounce(writeStorage, STORAGE_UPDATE_DELAY);
   },
 };
@@ -205,7 +209,7 @@ function initState({initReplace} = {}) {
     stateActiveAppliesTo ||
     stateCm);
   const cmExtra = $('body > :not(#sections) .CodeMirror');
-  stateEditors = cmExtra ? [cmExtra.CodeMirror] : editor.getEditors();
+  stateEditors = cmExtra ? [cmExtra[kCodeMirror]] : editor.getEditors();
 }
 
 function doSearch({
@@ -548,28 +552,28 @@ function createDialog(type) {
   stateOriginalFocus = document.activeElement;
   stateFirstRun = true;
 
-  const dialog = stateDialog = template.searchReplaceDialog.cloneNode(true);
+  const dialog = stateDialog = templateCache.searchReplaceDialog.cloneNode(true);
   Object.assign(dialog, DIALOG_PROPS);
   dialog.on('focusout', EVENTS.onfocusout);
   dialog.dataset.type = type;
   dialog.style.pointerEvents = 'auto';
 
-  const content = $('[data-type="content"]', dialog);
-  content.parentNode.replaceChild(template[type].cloneNode(true), content);
+  const content = dialog.$('[data-type="content"]');
+  content.parentNode.replaceChild(templateCache[type].cloneNode(true), content);
 
   stateInput = createInput(0, INPUT_PROPS, stateFind);
   stateInput2 = createInput(1, INPUT2_PROPS, stateReplace);
-  toggleDataset($('[data-action="case"]', dialog), 'enabled', !stateIcase);
-  stateTally = $('[data-type="tally"]', dialog);
+  $toggleDataset(dialog.$('[data-action="case"]'), 'enabled', !stateIcase);
+  stateTally = dialog.$('[data-type="tally"]');
 
   const colors = {
     body: colorMimicry(document.body, {bg: 'backgroundColor'}),
     input: colorMimicry($('input:not(:disabled)'), {bg: 'backgroundColor'}),
     icon: colorMimicry($$('i.i-info')[1]),
   };
-  $.root.appendChild(
-    $(DIALOG_STYLE_SELECTOR) ||
-    $create('style' + DIALOG_STYLE_SELECTOR)
+  $root.appendChild(
+    $id(DLG_STYLE_ID) ||
+    $create('style#' + DLG_STYLE_ID)
   ).textContent = `
     #search-replace-dialog {
       background-color: ${colors.body.bg};
@@ -599,9 +603,9 @@ function createDialog(type) {
   document.body.appendChild(dialog);
   dispatchEvent(new Event('showHotkeyInTooltip'));
 
-  adjustTextareaSize(stateInput);
+  if (!__.MV3 && !cssFieldSizing) adjustTextareaSize(stateInput);
   if (type === 'replace') {
-    adjustTextareaSize(stateInput2);
+    if (!__.MV3 && !cssFieldSizing) adjustTextareaSize(stateInput2);
     enableReplaceButtons(stateFind !== '');
     enableUndoButton(stateUndoHistory.length);
   }
@@ -610,21 +614,21 @@ function createDialog(type) {
 }
 
 function createInput(index, props, value) {
-  const input = $$('textarea', stateDialog)[index];
+  const input = stateDialog.$$('textarea')[index];
   if (!input) {
     return;
   }
   input.value = value;
   Object.assign(input, props);
 
-  input.parentElement.appendChild(template.clearSearch.cloneNode(true));
-  $('[data-action]', input.parentElement)._input = input;
+  input.parentElement.appendChild(templateCache.clearSearch.cloneNode(true));
+  input.parentElement.$('[data-action]')._input = input;
   return input;
 }
 
 function destroyDialog({restoreFocus = false} = {}) {
   stateInput = null;
-  $remove(DIALOG_SELECTOR);
+  $id(DLG_ID)?.remove();
   debounce.unregister(doSearch);
   makeTargetVisible(null);
   if (restoreFocus) {
@@ -636,28 +640,12 @@ function destroyDialog({restoreFocus = false} = {}) {
 }
 
 function adjustTextareaSize(el) {
-  const oldWidth = parseFloat(el.style.width) || el.clientWidth;
-  const widthHistory = el._widthHistory = el._widthHistory || new Map();
-  const knownWidth = widthHistory.get(el.value);
-  let newWidth;
-  if (knownWidth) {
-    newWidth = knownWidth;
-  } else {
-    const hasVerticalScrollbar = el.scrollHeight > el.clientHeight;
-    newWidth = el.scrollWidth + (hasVerticalScrollbar ? el.scrollWidth - el.clientWidth : 0);
-    newWidth += newWidth > oldWidth ? 50 : 0;
-    widthHistory.set(el.value, newWidth);
-  }
-  if (newWidth !== oldWidth) {
-    const dialogRightOffset = parseFloat(getComputedStyle(stateDialog).right);
-    const dialogRight = stateDialog.getBoundingClientRect().right;
-    const textRight = (stateInput2 || stateInput).getBoundingClientRect().right;
-    newWidth = Math.min(newWidth,
-      (window.innerWidth - dialogRightOffset - (dialogRight - textRight)) /
-      (stateInput2 ? 2 : 1) - 20);
-    el.style.width = newWidth + 'px';
-  }
-  const ovrX = el.scrollWidth > el.clientWidth;
+  const sw = el.scrollWidth;
+  const cw = el.clientWidth;
+  const w = sw > cw && ((sw / 50 | 0) + 1) * 50;
+  if (!w || w === cw) return;
+  el.style.width = w + 'px';
+  const ovrX = el.scrollWidth > el.clientWidth; // recalculate
   const numLines = el.value.split('\n').length + ovrX;
   if (numLines !== Number(el.rows)) {
     el.rows = numLines;
@@ -667,7 +655,7 @@ function adjustTextareaSize(el) {
 
 function enableReplaceButtons(enabled) {
   if (stateDialog && stateDialog.dataset.type === 'replace') {
-    for (const el of $$('[data-action^="replace"]', stateDialog)) {
+    for (const el of stateDialog.$$('[data-action^="replace"]')) {
       el.disabled = !enabled;
     }
   }
@@ -675,14 +663,14 @@ function enableReplaceButtons(enabled) {
 
 function enableUndoButton(enabled) {
   if (stateDialog && stateDialog.dataset.type === 'replace') {
-    for (const el of $$('[data-action="undo"]', stateDialog)) {
+    for (const el of stateDialog.$$('[data-action="undo"]')) {
       el.disabled = !enabled;
     }
   }
 }
 
 function focusUndoButton() {
-  for (const btn of $$('[data-action="undo"]', stateDialog)) {
+  for (const btn of stateDialog.$$('[data-action="undo"]')) {
     if (getComputedStyle(btn).display !== 'none') {
       btn.focus();
       break;
@@ -886,12 +874,12 @@ function readStorage() {
 }
 
 function writeStorage() {
-  chromeLocal.getValue('editor').then((val = {}) =>
-    chromeLocal.setValue('editor', Object.assign(val, {
-      find: stateFind,
-      replace: stateReplace,
-      icase: stateIcase,
-    })));
+  chromeLocal.getValue('editor').then((val = {}) => {
+    val.find = stateFind;
+    val.replace = stateReplace;
+    val.icase = stateIcase;
+    chromeLocal.set({editor: val});
+  });
 }
 
 //endregion

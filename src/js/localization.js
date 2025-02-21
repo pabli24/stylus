@@ -5,14 +5,17 @@
  * <tag i18n="title: id"> - creates an attribute `title`, spaces are ignored
  * <tag i18n="id, +id2, title:id3, placeholder:id4, data-foo:id5">
  */
-import {$, $$, $toFragment} from './dom';
-import {fetchText, hasOwn} from './util';
+import {$createFragment} from './dom';
+import {t} from './util';
 
-export const template = /*@__PURE__*/new Proxy({}, {
-  get: (obj, k, _) => hasOwn(obj, k) ? obj[k] :
-    (_ = $(`template[data-id="${k}"]`)) && (obj[k] = createTemplate(_)),
+/** @typedef {Record<string, Element|DocumentFragment>} TemplateCache */
+/** @type {TemplateCache} */
+export const templateCache = {};
+/** @type {TemplateCache} */
+export const template = /*@__PURE__*/new Proxy(templateCache, {
+  get: (obj, k) => obj[k] || createTemplate($(`template[data-id="${k}"]`)),
 });
-const ALLOWED_TAGS = ['a', 'b', 'br', 'code', 'i', 'nobr', 'small', 'sub', 'sup', 'wbr'];
+const ALLOWED_TAGS = ['a', 'b', 'br', 'code', 'i', 'hr', 'nobr', 'small', 'sub', 'sup', 'wbr'];
 const RX_WORD_BREAK = /([\w{-\uFFFF]{10}|[\w{-\uFFFF]{5,10}[!'")*,./]|((?!\s)\W){10})(?!\s|$)/gu;
 const SELECTOR = '[i18n]';
 const RELATIVE_UNITS = [
@@ -25,120 +28,63 @@ const RELATIVE_UNITS = [
   [12, 'month', 1],
   [1e99, 'year', 1],
 ];
-const cache = {};
 const intlCache = {};
+/** Adds soft hyphens every 10 characters to ensure the long words break before breaking the layout */
+export const breakWord = text => text.length <= 10 ? text
+  : text.replace(RX_WORD_BREAK, '$&\u00AD');
+export const parseHtml = str => new DOMParser().parseFromString(str, 'text/html');
+export const tHTML = html => typeof html !== 'string'
+  ? html
+  : /<\w+/.test(html) // check for html tags
+    ? $createFragment(sanitizeHtml(html))
+    : document.createTextNode(html);
+
 let onBodyListeners = [];
 
-export function t(key, params, strict = true) {
-  const cached = !params && cache[key];
-  const s = cached || chrome.i18n.getMessage(key, params);
-  if (!s && strict) throw `Missing string "${key}"`;
-  if (!params) cache[key] = s;
-  return s;
-}
-
-export function tHTML(html) {
-  return typeof html !== 'string'
-    ? html
-    : /<\w+/.test(html) // check for html tags
-      ? createHtml(html.replace(/>\n\s*</g, '><').trim())
-      : document.createTextNode(html);
-}
-
-function tNodeList(nodes) {
-  for (const node of nodes) {
-    if (!node.localName) continue;
-    const attr = node.getAttribute('i18n');
+function tElements(elems) {
+  for (const el of elems) {
+    const attr = el.getAttribute('i18n');
     if (!attr) continue;
-    for (const part of attr.split(',')) {
-      let toInsert, first;
-      let [type, value] = part.trim().split(/\s*:\s*/);
-      if (!value) [type, value] = type.split(/(\w+)/);
-      value = t(value);
-      switch (type) {
-        case '':
-          first = true;
-          // fallthrough
-        case '+':
-          toInsert = createText(value);
-          break;
-        case 'html':
-          first = true;
-          // fallthrough
-        case '+html':
-          toInsert = createHtml(value);
-          break;
-        default:
-          node.setAttribute(type, value);
-      }
-      if (toInsert) {
-        node.insertBefore(toInsert, first && node.firstChild);
-      }
+    for (let item of attr.split(',')) {
+      item = item.trim();
+      const add = item.charCodeAt(0) === 43/* + */;
+      const fn = add ? 'append' : 'prepend';
+      const i = item.indexOf(':');
+      const key = i > 0 && item.slice(add, i);
+      const val = t(i > 0 ? item.slice(i + 1).trim() : add ? item.slice(1) : item);
+      if (!key) el[fn](breakWord(val));
+      else if (key === 'html') el[fn](...sanitizeHtml(val));
+      else el.setAttribute(key, breakWord(val));
     }
-    node.removeAttribute('i18n');
+    el.removeAttribute('i18n');
   }
 }
 
-/** Adds soft hyphens every 10 characters to ensure the long words break before breaking the layout */
-export function breakWord(text) {
-  return text.length <= 10 ? text :
-    text.replace(RX_WORD_BREAK, '$&\u00AD');
-}
-
-export function createTemplate(el) {
-  const {content} = el;
-  const toRemove = [];
-  // Compress inter-tag whitespace to reduce DOM tree and avoid space between elements without flex
-  const walker = document.createTreeWalker(content,
-    4 /*NodeFilter.SHOW_TEXT*/ | 0x80 /*NodeFilter.SHOW_COMMENT*/);
-  for (let n; (n = walker.nextNode());) {
-    if (!/[\xA0\S]/.test(n.textContent) ||  // allowing \xA0 so as to preserve &nbsp;
-        n.nodeType === 8 /*Node.COMMENT_NODE*/) {
-      toRemove.push(n);
-    }
-  }
-  toRemove.forEach(n => n.remove());
-  tNodeList($$(SELECTOR, content));
-  return (template[el.dataset.id] =
-    content.childNodes.length > 1
-      ? content
-      : content.childNodes[0]);
-}
-
-export function createText(str) {
-  return document.createTextNode(breakWord(str));
-}
-
-export function createHtml(str, trusted) {
-  const root = parseHtml(str);
-  if (!trusted) {
-    sanitizeHtml(root);
-  } else if (str.includes('i18n=')) {
-    tNodeList($$(SELECTOR, root));
-  }
-  return $toFragment(root);
-}
-
-export async function fetchTemplate(url, name, all) {
-  let res = template[name];
-  if (!res) {
-    res = parseHtml(await fetchText(url), '*');
-    if (![...$$(`template[data-id${all ? '' : `="${name}"`}]`, res)].map(createTemplate).length) {
-      createTemplate({
-        content: $toFragment($('body', res)),
-        dataset: {id: name},
-      });
-    }
-    res = template[name];
-  }
+function createTemplate(el) {
+  if (!el) return;
+  const {content = el, dataset: {id} = {}} = el;
+  const first = content.firstChild;
+  const res = first.nextSibling ? content : first;
+  if (id) templateCache[id] = res;
+  tElements(res.$$(SELECTOR));
   return res;
 }
 
-function parseHtml(str, pick = 'body') {
-  return $(pick, new DOMParser().parseFromString(str, 'text/html'));
+export function htmlToTemplate(html) {
+  const el = parseHtml(html).body;
+  const first = el.firstChild;
+  const res = first.nextSibling ? $createFragment(el.childNodes) : first;
+  tElements(res.$$(SELECTOR));
+  return res;
 }
 
-export function sanitizeHtml(root) {
+export function htmlToTemplateCache(html) {
+  for (const el of parseHtml(html).$$('template[data-id]')) createTemplate(el);
+  return templateCache;
+}
+
+export function sanitizeHtml(str) {
+  const root = parseHtml(str).body;
   const toRemove = [];
   const walker = document.createTreeWalker(root);
   for (let n; (n = walker.nextNode());) {
@@ -160,9 +106,9 @@ export function sanitizeHtml(root) {
     }
   }
   for (const n of toRemove) {
-    const parent = n.parentNode;
-    if (parent) parent.removeChild(n); // not using .remove() as there may be a non-element
+    n.parentNode?.removeChild(n); // not using .remove() as there may be a non-element
   }
+  return root.childNodes;
 }
 
 export function formatDate(date, needsTime) {
@@ -217,10 +163,13 @@ export function formatRelativeDate(date, style) {
 
 export function tBody(fn) {
   if (!fn) {
-    tNodeList($$(SELECTOR));
-    if (template.body) document.body.append(template.body);
+    tElements(document.$$(SELECTOR));
+    const tpl = template.body;
+    if (tpl && tpl !== document.body) {
+      (template.body = document.body).append(tpl);
+    }
     for (fn of onBodyListeners) fn();
-    template.body = onBodyListeners = undefined;
+    onBodyListeners = undefined;
   } else if (onBodyListeners) {
     onBodyListeners.push(fn);
   } else {

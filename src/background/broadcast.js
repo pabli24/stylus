@@ -1,49 +1,55 @@
-import '/js/browser';
-import {rxIgnorableError} from '/js/msg-api';
-import {ownRoot} from '/js/urls';
-import * as tabMan from './tab-manager';
+import '@/js/browser';
+import {kBroadcast} from '@/js/consts';
+import {rxIgnorableError} from '@/js/msg-api';
+import {chromeLocal, chromeSession} from '@/js/storage-util';
+import {ownRoot} from '@/js/urls';
+import {getWindowClients} from './util';
 
-/**
- * @param {?} data
- * @param {{}} [opts]
- * @param {boolean} [opts.onlyIfStyled] - only tabs that are known to contain styles
- * @param {(tab?:Tab)=>?} [opts.getData] - provides data for this tab, nullish result = skips tab
- * @return {Promise<?[]>}
- */
-export async function broadcast(data, {onlyIfStyled, getData} = {}) {
-  const jobs = [];
-  if (!getData || (data = getData())) {
-    jobs.push(broadcastExtension(data, 'both'));
-  }
-  const tabs = (await browser.tabs.query({})).sort((a, b) => b.active - a.active);
-  for (const tab of tabs) {
-    if (!tab.discarded &&
-      // including tabs with unsupported `url` as they may contain supported iframes
-      (!onlyIfStyled || tabMan.getStyleIds(tab.id)) &&
-      // own tabs are informed via broadcastExtension
-      !(tab.pendingUrl || tab.url || '').startsWith(ownRoot) &&
-      (!getData || (data = getData(tab)))
-    ) {
-      jobs.push(sendTab(tab.id, data));
-    }
-  }
-  return Promise.all(jobs);
+let toBroadcast;
+
+export function broadcast(data) {
+  toBroadcast ??= (setTimeout(__.MV3 ? doBroadcast : doBroadcastMV2), []);
+  toBroadcast.push(data);
 }
 
-export function broadcastExtension(data, target = 'extension') {
-  return unwrap(browser.runtime.sendMessage({data, target}));
+function doBroadcast() {
+  toBroadcast.push(Math.random());
+  (chromeSession || chromeLocal).set({[kBroadcast]: toBroadcast});
+  toBroadcast = null;
+}
+
+async function doBroadcastMV2() {
+  const jobs = [];
+  const [clients, tabs] = await Promise.all([
+    __.MV3 && getWindowClients(), // TODO: detect the popup in Chrome MV2 incognito window?
+    browser.tabs.query({}),
+  ]);
+  const iActive = tabs.find(t => t.active);
+  const data = toBroadcast;
+  toBroadcast = null;
+  if (iActive > 0)
+    tabs.unshift(tabs.splice(iActive, 1)[0]);
+  if (!__.MV3 || clients[0])
+    jobs.push(broadcastExtension(data, true));
+  for (const {url, id} of tabs)
+    if (url && !url.startsWith(ownRoot) && jobs.push(sendTab(id, data, null, true)) > 20)
+      await Promise.all(jobs.splice(0));
+  await Promise.all(jobs);
+}
+
+export function broadcastExtension(data, multi) {
+  return unwrap(browser.runtime.sendMessage({data, multi}));
 }
 
 export function pingTab(tabId, frameId = 0) {
   return sendTab(tabId, {method: 'ping'}, {frameId});
 }
 
-export function sendTab(tabId, data, options, target = 'tab') {
-  return unwrap(browser.tabs.sendMessage(tabId, {data, target}, options),
-    __.MV3 && !options?.frameId ? tabId : -1);
+export function sendTab(tabId, data, options, multi) {
+  return unwrap(browser.tabs.sendMessage(tabId, {data, multi}, options), multi);
 }
 
-async function unwrap(promise, tabId) {
+async function unwrap(promise, multi) {
   const err = new Error();
   let data, error;
   try {
@@ -52,12 +58,14 @@ async function unwrap(promise, tabId) {
   } catch (e) {
     error = e;
     if (rxIgnorableError.test(err.message = e.message)) {
-      if (__.MV3 && tabId >= 0 && RegExp.$1) {
-        tabMan.remove(tabId);
-      }
-      return data;
+      return;
     }
   }
-  if (error.stack) err.stack = error.stack + '\n' + err.stack;
+  if (error.stack)
+    err.stack = error.stack + '\n' + err.stack;
+  if (multi) {
+    console.error(err);
+    return data;
+  }
   return Promise.reject(err);
 }

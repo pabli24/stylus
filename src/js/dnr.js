@@ -1,5 +1,5 @@
-export const DNR_ID_IDENTITY = 10;
-export const DNR_ID_INSTALLER = 20;
+export const DNR_ID_IDENTITY = 1e6;
+export const DNR_ID_INSTALLER = 1;
 
 export const DNR = __.MV3 && chrome.declarativeNetRequest;
 /**
@@ -25,6 +25,6 @@ function updateDNR(
   return this({addRules, removeRuleIds});
 }
 
-if (__.MV3 && !__.ZIP && __.DEBUG) {
+if (__.MV3 && (__.DEBUG || __.DEV)) {
   DNR.onRuleMatchedDebug?.addListener(console.log.bind(null, 'DNR'));
 }

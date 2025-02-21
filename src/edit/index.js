@@ -1,9 +1,8 @@
-import '/js/dom-init';
-import {$, $$} from '/js/dom';
-import {tBody, template} from '/js/localization';
-import * as prefs from '/js/prefs';
-import CodeMirror from 'codemirror';
-import CompactHeader from './compact-header';
+import '@/js/dom-init';
+import {tBody} from '@/js/localization';
+import * as prefs from '@/js/prefs';
+import {CodeMirror} from '@/cm';
+import CompactHeader, {toggleSticky} from './compact-header';
 import editor from './editor';
 import EditorHeader from './editor-header';
 import * as linterMan from './linter';
@@ -17,11 +16,14 @@ import './live-preview';
 import USWIntegration from './usw-integration';
 import './windowed-mode';
 import './edit.css';
+/** Loading here to avoid a separate tiny file in dist */
+import './autocomplete.css';
 
 tBody();
 
 (async () => {
   if (loading) await loading;
+  if (editor.scrollInfo.sticky) toggleSticky(true);
   EditorHeader();
   USWIntegration();
   // TODO: load respective js on demand?
@@ -38,24 +40,18 @@ tBody();
     };
   }
   // enabling after init to prevent flash of validation failure on an empty name
-  $('#name').required = !editor.isUsercss;
-  $('#save-button').onclick = editor.save;
-  $('#cancel-button').onclick = editor.cancel;
-  // $('#testRE').hidden = !editor.style.sections.some(({regexps: r}) => r && r.length);
-  $('#testRE').onclick = async function () {
+  $id('name').required = !editor.isUsercss;
+  $id('save-button').onclick = editor.save;
+  $id('cancel-button').onclick = editor.cancel;
+  // $id('testRE').hidden = !editor.style.sections.some(({regexps: r}) => r && r.length);
+  $id('testRE').onclick = async function () {
     (this.onclick = (await import('./regexp-tester')).toggle)(true);
   };
-  $('#lint-help').onclick = async function () {
+  $id('lint-help').onclick = async function () {
     (this.onclick = (await import('./linter/dialogs')).showLintHelp)();
   };
-  $('#linter-settings', template.editorSettings).onclick = async function () {
-    (this.onclick = (await import('./linter/dialogs')).showLintConfig)();
-  };
-  $('#keyMap-help', template.editorSettings).onclick = async function () {
-    (this.onclick = (await import('./show-keymap-help')).default)();
-  };
-  const elSec = $('#sections-list');
-  const elToc = $('#toc');
+  const elSec = $id('sections-list');
+  const elToc = $id('toc');
   const moDetails = new MutationObserver(([{target: sec}]) => {
     if (!sec.open) return;
     if (sec === elSec) editor.updateToc();

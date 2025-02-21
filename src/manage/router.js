@@ -1,6 +1,5 @@
-import {$} from '/js/dom';
-import {onMessage} from '/js/msg';
-import {deepEqual} from '/js/util';
+import {onMessage} from '@/js/msg';
+import {deepEqual} from '@/js/util';
 
 const buffer = history.state?.buffer || [];
 const watchers = [];
@@ -10,17 +9,22 @@ export function getSearch(key) {
 }
 
 /** When showing the UI, `showHide` function must resolve only when the UI is closed */
-export function makeToggle(hashId, showHide, loadDeps) {
+export function makeToggle(toggler, hashId, showHide, loadDeps) {
   const hash = '#' + hashId;
   const selector = '.' + hashId;
   watch({hash}, async state => {
     const el = $(selector);
     if (!state === !el) return;
-    if (state && loadDeps && !showHide) showHide = await loadDeps();
-    await showHide(state, el, selector);
+    if (state && loadDeps) showHide ??= await loadDeps();
+    await showHide(state, el, selector, toggler);
     if (state) updateHash('');
   });
-  return updateHash.bind(null, hash);
+  for (const el of $$(toggler)) {
+    el.on('click', () => {
+      toggler = el;
+      updateHash(hash);
+    });
+  }
 }
 
 export function push(url) {
@@ -110,10 +114,9 @@ export function watch(options, callback) {
 
 window.on('popstate', update);
 window.on('hashchange', update);
-onMessage(m => {
+onMessage.set(m => {
   if (m.method === 'pushState' && m.url !== location.href) {
     push(m.url);
     update();
-    return true;
   }
 });

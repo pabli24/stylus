@@ -1,8 +1,8 @@
-import {$, $$, $create} from '/js/dom';
-import {API} from '/js/msg';
-import * as URLS from '/js/urls';
-import {debounce, stringAsRegExpStr} from '/js/util';
-import {getOwnTab, MF_ICON} from '/js/util-webext';
+import {$create} from '@/js/dom';
+import {API} from '@/js/msg-api';
+import * as URLS from '@/js/urls';
+import {debounce, stringAsRegExpStr} from '@/js/util';
+import {getOwnTab, MF_ICON} from '@/js/util-webext';
 import {createTargetsElement} from './render';
 import {installed, newUI} from './util';
 
@@ -20,7 +20,7 @@ export async function renderFavs(container = installed) {
   const regexpReplaceExtraCharacters = /[\\(]|((\|\w+)+\))/g;
   const regexpMatchRegExp = /[\w-]+[.(]+(com|org|co|net|im|io|edu|gov|biz|info|de|cn|uk|nl|eu|ru)\b/g;
   const regexpMatchDomain = /^.*?:\/\/\W*([-.\w]+)/;
-  for (const target of $$('.target', container)) {
+  for (const target of container.$$('.target')) {
     const type = target.dataset.type;
     const targetValue = target.textContent;
     if (!targetValue) continue;
@@ -46,7 +46,7 @@ export async function renderFavs(container = installed) {
     if (favicon !== MF_ICON) {
       favicon = URLS.favicon(favicon);
     }
-    const img = $(':scope > img:first-child', target) ||
+    const img = target.$(':scope > img:first-child') ||
       target.insertAdjacentElement('afterbegin', $create('img', {loading: 'lazy'}));
     if ((img.dataset.src || img.src) !== favicon) {
       img.src = favicon;
@@ -56,7 +56,7 @@ export async function renderFavs(container = installed) {
 
 export async function readBadFavs(val) {
   if (!val) {
-    val = await (dbBusy || (dbBusy = API.prefsDb.get(BAD_FAVS_KEY)));
+    val = await (dbBusy || (dbBusy = API.prefsDB.get(BAD_FAVS_KEY)));
     dbBusy = false;
   }
   return (newUI.cfg[BAD_FAVS_KEY] = Array.isArray(val) ? val : []);
@@ -64,7 +64,7 @@ export async function readBadFavs(val) {
 
 async function initBadFavs() {
   // API creates a new function each time so we save it for `debounce` which is keyed on function object
-  const {put} = API.prefsDb;
+  const {put} = API.prefsDB;
   const rxHost = new RegExp(
     `^${stringAsRegExpStr(URLS.favicon('\n')).replace('\n', '(.*)')}$`);
   badFavs = newUI.cfg[BAD_FAVS_KEY] || await (badFavs = readBadFavs());
@@ -87,8 +87,8 @@ async function initBadFavs() {
 
 export function renderMissingFavs(num, iconsMissing, iconsEnabled) {
   for (const entry of installed.children) {
-    $('.applies-to', entry).classList.toggle('has-more', entry._numTargets > num);
-    if (!entry._allTargetsRendered && num > $('.targets', entry).childElementCount) {
+    entry.$('.applies-to').classList.toggle('has-more', entry._numTargets > num);
+    if (!entry._allTargetsRendered && num > entry.$('.targets').childElementCount) {
       createTargetsElement({entry});
       iconsMissing |= iconsEnabled;
     } else if ((+entry.style.getPropertyValue('--num-targets') || 1e9) > num) {

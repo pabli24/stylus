@@ -1,27 +1,43 @@
-import {$, $$, $create} from '/js/dom';
-import {messageBox, scrollElementIntoView} from '/js/dom-util';
-import {t} from '/js/localization';
-import {API} from '/js/msg';
-import * as prefs from '/js/prefs';
-import {chromeLocal} from '/js/storage-util';
+import {kStyleIdPrefix} from '@/js/consts';
+import {$create, $detach, $toggleClasses} from '@/js/dom';
+import {messageBox, scrollElementIntoView} from '@/js/dom-util';
+import {template} from '@/js/localization';
+import {onConnect} from '@/js/msg';
+import {API} from '@/js/msg-api';
+import * as prefs from '@/js/prefs';
+import {chromeLocal} from '@/js/storage-util';
+import {t} from '@/js/util';
 import {filterAndAppend, filtersSelector} from './filters';
 import {updateStripes} from './sorter';
-import {$entry, newUI} from './util';
+import {newUI} from './util';
 
-const btnCheck = $('#check-all-updates');
-const btnCheckForce = $('#check-all-updates-force');
-const btnApply = $('#apply-all-updates');
+const elAll = template.updateAll;
+const btnApply = elAll.$('#apply-all-updates');
+const btnCheck = $id('check-all-updates');
+const btnCheckForce = elAll.$('#check-all-updates-force');
+const elNoUpdates = elAll.$('#update-all-no-updates');
+const elOnlyUpdates = template.onlyUpdates;
 btnCheck.onclick = btnCheckForce.onclick = checkUpdateAll;
 btnApply.onclick = applyUpdateAll;
 
-prefs.subscribe('updateOnlyEnabled', (key, val) => {
-  btnCheck.title = val ? t('manageOnlyEnabled') : '';
-}, true);
+for (const el of [...elAll.children]) $detach(el);
+for (const id of ['updateAll', 'onlyUpdates']) {
+  $(`template[data-id="${id}"]`).replaceWith(template[id]);
+}
+$detach(elOnlyUpdates);
+{
+  const kBtns = 'manage.actions.expanded';
+  const kOnly = 'updateOnlyEnabled';
+  prefs.subscribe([kBtns, kOnly], () => {
+    btnCheck.title = btnCheck.title.split('\n')[0] +
+      (!prefs.__values[kBtns] && prefs.__values[kOnly] ? `\n(${t('manageOnlyEnabled')})` : '');
+  }, true);
+}
 
 function applyUpdateAll() {
   btnApply.disabled = true;
   setTimeout(() => {
-    btnApply.classList.add('hidden');
+    $detach(btnApply);
     btnApply.disabled = false;
     renderUpdatesOnlyFilter({show: false});
   }, 1000);
@@ -34,11 +50,10 @@ function applyUpdateAll() {
 
 function checkUpdateAll() {
   document.body.classList.add('update-in-progress');
-  const noUpdates = $('#update-all-no-updates');
   btnCheck.disabled = true;
-  btnCheckForce.classList.add('hidden');
-  btnApply.classList.add('hidden');
-  noUpdates.classList.add('hidden');
+  $detach(btnCheckForce);
+  $detach(btnApply);
+  $detach(elNoUpdates);
 
   const ignoreDigest = this === btnCheckForce;
   $$('.updatable:not(.can-update)' + (ignoreDigest ? '' : ':not(.update-problem)'))
@@ -49,11 +64,7 @@ function checkUpdateAll() {
   let skippedEdited = 0;
   let updated = 0;
 
-  chrome.runtime.onConnect.addListener(function onConnect(port) {
-    if (port.name !== 'updater') return;
-    port.onMessage.addListener(observer);
-    chrome.runtime.onConnect.removeListener(onConnect);
-  });
+  onConnect.updater = port => port.onMessage.addListener(observer);
 
   API.updater.checkAllStyles({
     save: false,
@@ -77,7 +88,7 @@ function checkUpdateAll() {
         [info.STATES.EDITED, info.STATES.MAYBE_EDITED].includes(info.error);
       reportUpdateState(info);
     }
-    const progress = $('#update-progress');
+    const progress = $id('update-progress');
     const maxWidth = progress.parentElement.clientWidth;
     progress.style.width = Math.round(checked / total * maxWidth) + 'px';
 
@@ -89,16 +100,16 @@ function checkUpdateAll() {
     btnApply.disabled = false;
     renderUpdatesOnlyFilter({check: updated + skippedEdited > 0});
     if (!updated) {
-      noUpdates.dataset.skippedEdited = skippedEdited > 0;
-      noUpdates.classList.remove('hidden');
-      btnCheckForce.classList.toggle('hidden', skippedEdited === 0);
+      elNoUpdates.dataset.skippedEdited = skippedEdited > 0;
+      $detach(elNoUpdates, false);
+      $detach(btnCheckForce, !skippedEdited);
     }
   }
 }
 
 export function checkUpdate(entry, {single} = {}) {
-  $('.update-note', entry).textContent = t('checkingForUpdate');
-  $('.check-update', entry).title = '';
+  entry.$('.update-note').textContent = t('checkingForUpdate');
+  entry.$('.check-update').title = '';
   if (single) {
     API.updater.checkStyle({
       save: false,
@@ -112,27 +123,27 @@ export function checkUpdate(entry, {single} = {}) {
 
 function reportUpdateState({updated, style, error, STATES}) {
   const isCheckAll = document.body.classList.contains('update-in-progress');
-  const entry = $entry(style);
-  const newClasses = new Map([
+  const entry = $id(kStyleIdPrefix + style.id);
+  const newClasses = {
     /*
      When a style is updated/installed, handleUpdateInstalled() clears "updatable"
      and sets "update-done" class (optionally "install-done").
      If you don't close the manager and the style is changed remotely,
      checking for updates would find an update so we need to ensure the entry is "updatable"
      */
-    ['updatable', true],
+    'updatable': 1,
     // falsy = remove
-    ['checking-update', 0],
-    ['update-done', 0],
-    ['install-done', 0],
-    ['no-update', 0],
-    ['update-problem', 0],
-  ]);
+    'checking-update': 0,
+    'update-done': 0,
+    'install-done': 0,
+    'no-update': 0,
+    'update-problem': 0,
+  };
   if (updated) {
-    newClasses.set('can-update', true);
+    newClasses['can-update'] = true;
     entry.updatedCode = style;
-    $('.update-note', entry).textContent = '';
-    $('#only-updates').classList.remove('hidden');
+    entry.$('.update-note').textContent = '';
+    $detach(elOnlyUpdates, false);
   } else if (!entry.classList.contains('can-update')) {
     const same = (
       error === STATES.SAME_MD5 ||
@@ -159,17 +170,17 @@ function reportUpdateState({updated, style, error, STATES}) {
     }
     entry.dataset.error = error;
     const message = same ? t('updateCheckSucceededNoUpdate') : error;
-    newClasses.set('no-update', true);
-    newClasses.set('update-problem', !same);
-    $('.update-note', entry).textContent = message;
-    $('.check-update', entry).title = newUI.cfg.enabled ? message : '';
-    $('.update', entry).title = t(edited ? 'updateCheckManualUpdateForce' : 'installUpdate');
+    newClasses['no-update'] = true;
+    newClasses['update-problem'] = !same;
+    entry.$('.update-note').textContent = message;
+    entry.$('.check-update').title = newUI.cfg.enabled ? message : '';
+    entry.$('.update').title = t(edited ? 'updateCheckManualUpdateForce' : 'installUpdate');
     // digest may change silently when forcing an update of a locally edited style
     // so we need to update it in entry's styleMeta in all open manager tabs
     if (error === STATES.SAME_CODE) {
       for (const view of chrome.extension.getViews({type: 'tab'})) {
         if (view.location.pathname === location.pathname) {
-          const el = $entry(style, view.document);
+          const el = view[kStyleIdPrefix + style.id];
           if (el) el.styleMeta.originalDigest = style.originalDigest;
         }
       }
@@ -179,21 +190,7 @@ function reportUpdateState({updated, style, error, STATES}) {
     }
   }
 
-  // construct a new className:
-  // 1. add all truthy newClasses
-  // 2. remove falsy newClasses
-  // 3. keep existing classes otherwise
-  const classes = new Map([...entry.classList.values()].map(cls => [cls, true]));
-  for (const [cls, newState] of newClasses) {
-    classes.set(cls, newState);
-  }
-  const className = [...classes]
-    .map(([cls, state]) => state && cls)
-    .filter(Boolean)
-    .join(' ');
-  if (className !== entry.className) {
-    entry.className = className;
-  }
+  $toggleClasses(entry, newClasses);
 
   if (filtersSelector.hide && isCheckAll) {
     filterAndAppend({entry}).then(updateStripes);
@@ -205,15 +202,15 @@ function reportUpdateState({updated, style, error, STATES}) {
 function renderUpdatesOnlyFilter({show, check} = {}) {
   const numUpdatable = $$('.can-update').length;
   const mightUpdate = numUpdatable > 0 || $('.update-problem');
-  const checkbox = $('#only-updates input');
+  const checkbox = elOnlyUpdates.$('input');
   show = show !== undefined ? show : mightUpdate;
   check = check !== undefined ? show && check : checkbox.checked && mightUpdate;
 
-  $('#only-updates').classList.toggle('hidden', !show);
+  $detach(elOnlyUpdates, !show);
   checkbox.checked = check && show;
   checkbox.dispatchEvent(new Event('change'));
 
-  btnApply.classList.toggle('hidden', !numUpdatable);
+  $detach(btnApply, !numUpdatable);
   btnApply.dataset.value = numUpdatable;
 }
 
@@ -239,7 +236,7 @@ export default async function UpdateHistory(show, el, selector) {
       logText && {textContent: t('confirmDelete'), onclick: deleteHistory},
     ],
     onshow: logText && (() => {
-      scroller = $('#message-box-contents');
+      scroller = $id('message-box-contents');
       scroller.tabIndex = 0;
       setTimeout(() => scroller.focus());
       scrollToBottom();
@@ -283,7 +280,7 @@ export default async function UpdateHistory(show, el, selector) {
 
   function deleteHistory() {
     if (deleted) {
-      chromeLocal.setValue('updateLog', logText.split('\n'));
+      chromeLocal.set({updateLog: logText.split('\n')});
       setTimeout(scrollToBottom);
     } else {
       chromeLocal.remove('updateLog');
@@ -300,7 +297,7 @@ export function handleUpdateInstalled(entry, reason) {
   const note = t(isNew ? 'installButtonInstalled' : 'updateCompleted');
   entry.classList.add('update-done', ...(isNew ? ['install-done'] : []));
   entry.classList.remove('can-update', 'updatable');
-  $('.update-note', entry).textContent = note;
-  $('.updated', entry).title = note;
+  entry.$('.update-note').textContent = note;
+  entry.$('.updated').title = note;
   renderUpdatesOnlyFilter();
 }

@@ -1,8 +1,8 @@
-import {UCD} from '/js/consts';
-import {API} from '/js/msg';
-import {deepCopy, mapObj, RX_META} from '/js/util';
+import {UCD} from '@/js/consts';
+import {deepCopy, mapObj, RX_META, t} from '@/js/util';
 import download from './download';
 import * as styleMan from './style-manager';
+import {worker} from './util';
 
 export * from './usercss-install-helper';
 
@@ -26,7 +26,7 @@ async function assign(style, src) {
       const old = oldVars[key] && oldVars[key].value;
       if (old != null) v.value = old;
     }
-    meta.vars = await API.worker.nullifyInvalidVars(vars);
+    meta.vars = await worker.nullifyInvalidVars(vars);
   }
 }
 
@@ -57,7 +57,7 @@ export async function build({
 
 export async function buildCode(style) {
   const {sourceCode: code, [UCD]: {vars, preprocessor}} = style;
-  const {sections, errors, log} = await API.worker.compileUsercss(preprocessor, code, vars);
+  const {sections, errors, log} = await worker.compileUsercss(preprocessor, code, vars);
   const recoverable = errors.every(e => e.recoverable);
   if (!sections.length || !recoverable) {
     throw !recoverable ? errors : 'Style does not contain any actual CSS to apply.';
@@ -83,7 +83,7 @@ export async function buildMeta(style) {
     return Promise.reject(new Error('Could not find metadata.'));
   }
   try {
-    const {metadata} = await API.worker.parseUsercssMeta(match[0]);
+    const {metadata} = await worker.parseUsercssMeta(match[0]);
     style[UCD] = metadata;
     // https://github.com/openstyles/stylus/issues/560#issuecomment-440561196
     for (const [key, globalKey] of GLOBAL_META) {
@@ -98,7 +98,7 @@ export async function buildMeta(style) {
       const args = err.code === 'missingMandatory' || err.code === 'missingChar'
         ? err.args.map(e => e.length === 1 ? JSON.stringify(e) : e).join(', ')
         : err.args;
-      const msg = chrome.i18n.getMessage(`meta_${(err.code)}`, args);
+      const msg = t(`meta_${(err.code)}`, args);
       if (msg) err.message = msg;
       err.index += match.index;
     }
@@ -110,7 +110,7 @@ export async function configVars(id, vars) {
   const style = deepCopy(styleMan.get(id));
   style[UCD].vars = vars;
   await buildCode(style);
-  return (await API.styles.install(style, 'config'))[UCD].vars;
+  return (await styleMan.install(style, 'config'))[UCD].vars;
 }
 
 export async function editSave(style) {

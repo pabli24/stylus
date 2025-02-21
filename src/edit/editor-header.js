@@ -1,21 +1,19 @@
-import {CodeMirror, extraKeys} from '/cm';
-import {$, $$} from '/js/dom';
-import {setInputValue, setupLivePrefs} from '/js/dom-util';
-import {t} from '/js/localization';
-import * as prefs from '/js/prefs';
-import {sleep} from '/js/util';
+import {CodeMirror, extraKeys} from '@/cm';
+import {setInputValue, setupLivePrefs} from '@/js/dom-util';
+import * as prefs from '@/js/prefs';
+import {sleep, t} from '@/js/util';
 import {initBeautifyButton} from './beautify';
 import editor from './editor';
 
 export default function EditorHeader() {
-  initBeautifyButton($('#beautify'));
+  initBeautifyButton($id('beautify'));
   initNameArea();
   setupLivePrefs();
   window.on('load', () => {
     prefs.subscribe('editor.keyMap', showHotkeyInTooltip, true);
     window.on('showHotkeyInTooltip', showHotkeyInTooltip);
   }, {once: true});
-  for (const el of $$('#header details')) {
+  for (const el of $$('#header summary')) {
     el.on('contextmenu', peekDetails);
   }
 }
@@ -36,8 +34,8 @@ function findKeyForCommand(command, map) {
 }
 
 function initNameArea() {
-  const nameEl = $('#name');
-  const resetEl = $('#reset-name');
+  const nameEl = $id('name');
+  const resetEl = $id('reset-name');
   const isCustomName = editor.style.updateUrl || editor.isUsercss;
   editor.nameTarget = isCustomName ? 'customName' : 'name';
   nameEl.placeholder = t(editor.isUsercss ? 'usercssEditorNamePlaceholder' : 'styleMissingName');
@@ -52,21 +50,22 @@ function initNameArea() {
     editor.style.customName = null; // to delete it from db
     resetEl.hidden = true;
   };
-  const enabledEl = $('#enabled');
+  const enabledEl = $id('enabled');
   enabledEl.onchange = () => editor.updateEnabledness(enabledEl.checked);
 }
 
 async function peekDetails(evt) {
   evt.preventDefault();
-  this.open = true;
-  while (this.matches(':hover, :active')) {
+  const elDetails = this.parentNode;
+  if (!(elDetails.open = !elDetails.open)) return;
+  while (elDetails.matches(':hover, :active')) {
     await sleep(500);
-    await new Promise(cb => this.on('mouseleave', cb, {once: true}));
+    await new Promise(cb => elDetails.on('mouseleave', cb, {once: true}));
   }
-  this.open = false;
+  elDetails.open = false;
 }
 
-function showHotkeyInTooltip(_, mapName = prefs.get('editor.keyMap')) {
+function showHotkeyInTooltip(_, mapName = prefs.__values['editor.keyMap']) {
   for (const el of $$('[data-hotkey-tooltip]')) {
     if (el._hotkeyTooltipKeyMap !== mapName) {
       el._hotkeyTooltipKeyMap = mapName;

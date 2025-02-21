@@ -70,6 +70,9 @@
   "backupMessage": {
     "message": "Um die Backupdatei zu importieren, ziehe sie in diese Seite oder klicke auf die Import-Schaltfläche.\n\nZum Exportieren einer mit Stylus 1.5.18 (und älter) kompatiblen Backupdatei, rechtsklicke oder Shift-klicke auf die Export-Schaltfläche."
   },
+  "backupReminder": {
+    "message": "<b>Styles können verloren gehen</b> durch Stromausfall, Browser- oder Anwenderfehler. <hr><b>Sichere deine Daten:</b> Entweder in den Optionen „Mit der Cloud synchronisieren“ nutzen oder nach wesentlichen Änderungen manuell über die Exportschaltfläche. Erstelle am besten eine automatische Sicherung all deiner Daten mit einem Backupprogramm."
+  },
   "bckpInstStyles": {
     "message": "Styles exportieren"
   },
@@ -319,8 +322,17 @@
   "filteredStylesAllHidden": {
     "message": "Aktuell angewandte Filter treffen auf keinen Style zu"
   },
+  "find": {
+    "message": "Suchen"
+  },
   "findStyles": {
     "message": "Styles finden"
+  },
+  "findStylesOnline": {
+    "message": "Hier klicken, um online Styles zu suchen."
+  },
+  "general": {
+    "message": "Allgemeines"
   },
   "genericAdd": {
     "message": "Hinzufügen"
@@ -474,14 +486,8 @@
   "linkGetShareStyles": {
     "message": "Styles finden und teilen"
   },
-  "linkGetShareStylesInfo": {
-    "message": "Die neue, von der Community betriebene Website userstyles.world wurde von Userstyle-Autoren erstellt, um userstyles.org zu ersetzen. Dieses war im letzten Jahr so langsam und unzuverlässig geworden, dass viele Autoren ihre Styles nicht mehr aktualisierten."
-  },
   "linkGetStyles": {
     "message": "Styles beziehen"
-  },
-  "linkGetStylesInfo": {
-    "message": "Diese Archivseite wurde von einem Nutzer der Userstyle Community erstellt, um eine Sicherungskopie des langsamen und unzuverlässigen userstyles.org bereitzustellen. Die Inhalte werden ungefähr einmal am Tag aktualisiert."
   },
   "linkTranslate": {
     "message": "Übersetzen"
@@ -527,6 +533,9 @@
   },
   "linterRulesLink": {
     "message": "Vollständige Liste der Regeln anzeigen"
+  },
+  "liveReloadAfterInstall": {
+    "message": "Seite direkt neu laden nach der Installation"
   },
   "liveReloadError": {
     "message": "Bei der Echtzeitaktualisierung der Datei ist ein Fehler aufgetreten"
@@ -590,6 +599,9 @@
   },
   "manageOnlyUsercss": {
     "message": "Nur UserCSS Styles"
+  },
+  "masterSwitch": {
+    "message": "Hauptschalter"
   },
   "menuShowBadge": {
     "message": "Anzahl der aktiven Styles anzeigen"
@@ -800,6 +812,30 @@
   },
   "openOptions": {
     "message": "Optionen"
+  },
+  "optionCompactWidth": {
+    "message": "Maximale Fensterbreite beim kompakten UI Layout (in Pixeln)"
+  },
+  "optionFOUC": {
+    "message": "Styles zu spät angewendet?"
+  },
+  "optionFOUCMV2": {
+    "message": "Versuche \"<a>\" zu aktivieren."
+  },
+  "optionFOUCMV3": {
+    "message": "Versuche \"<a>\" zu aktivieren und \"<b>\" zu vergrößern."
+  },
+  "optionKeepAlive": {
+    "message": "Style Cachedauer"
+  },
+  "optionKeepAlive2": {
+    "message": "(in Minuten, -1 = unbegrenzt)"
+  },
+  "optionKeepAliveIdle": {
+    "message": "…auch wenn Browser inaktiv"
+  },
+  "optionKeepAliveNote": {
+    "message": "Erhöhe den Wert, wenn beim Öffnen einer Seite nach längerer Nichtbenutzung des Browsers ein Blinken von ungestyltem Inhalt (FOUC) auftritt.\n\n-1 = ManifestV2 Standardverhalten (Kein Limit).\n0 = ManifestV3 Standardverhalten (halbe Minute).\n\nDer Cache benötigt 30 MB oder mehr RAM, aber der Wiederaufbau kann zu viel Zeit in Anspruch nehmen und zu FOUC führen je nach Website, Netzwerkgeschwindigkeit, Anzahl der Styles, RAM-Größe und CPU-Leistung."
   },
   "optionsActions": {
     "message": "Aktionen"
@@ -1362,9 +1398,6 @@
   "stylusUnavailableForURLdetails": {
     "message": "Als Sicherheitsvorkehrung verbietet der Browser es Erweiterungen, seine eigenen Seiten (wie z.B. chrome://version oder about:addons) und eigene Seiten anderer Erweiterungen zu verändern. Auch die jeweils browser-eigene Erweiterungsgalerie (wie Chrome Web Store oder addons.mozilla.org) kann nicht verändert werden."
   },
-  "syncDropboxDeprecated": {
-    "message": "Dropbox Import / Export wurde durch einen fortschrittlicheren Mechanismus auf der Optionsseite ersetzt."
-  },
   "syncError": {
     "message": "Synchronisation fehlgeschlagen"
   },
@@ -1476,6 +1509,14 @@
   },
   "versionInvalidOlder": {
     "message": "Die Version des Styles ist älter als die des bereits installierten."
+  },
+  "webRequestBlockingMV3Note": {
+    "message": "Erfordert die Berechtigung webRequestBlocking, die in ManifestV3 mit einer der folgenden Methoden aktiviert werden kann:\n\n 1) Exportiere das Backup, richte die <a href='https://chromeenterprise.google/policies/?policy=ExtensionInstallForcelist'>ExtensionInstallForcelist-Richtlinie</a> für die ID \"$id$\" dieser Erweiterung ein. Starte den Browser neu und warte, bis die Erweiterung installiert ist. importiere das Backup in den Style Manager.\n\n 2) Ändere die Befehlszeile in der Browserverknüpfung oder im Launcher: Füge ein Leerzeichen und <code><nobr>--allowlisted-extension-id=$id$</nobr></code>hinzu.",
+    "placeholders": {
+      "id": {
+        "content": "$1"
+      }
+    }
   },
   "writeStyleFor": {
     "message": "Style erstellen für:"

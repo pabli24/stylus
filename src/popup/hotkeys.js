@@ -1,11 +1,12 @@
-import {$, $$, $create, $createLink} from '/js/dom';
-import {t, tBody} from '/js/localization';
-import {API} from '/js/msg';
+import {$create, $createLink} from '@/js/dom';
+import {tBody} from '@/js/localization';
+import {API} from '@/js/msg-api';
+import {t} from '@/js/util';
 
 tBody();
 
 const entries = document.getElementsByClassName('entry');
-const container = $('#hotkey-info');
+const container = $id('hotkey-info');
 const {title} = container;
 let togglablesShown = true;
 let togglables = getTogglables();
@@ -54,10 +55,7 @@ function onKeyDown(event) {
     key = key.toLocaleLowerCase();
     entry = [...entries].find(e => e.innerText.toLocaleLowerCase().startsWith(key));
   }
-  if (!entry) {
-    return;
-  }
-  $(shiftKey ? '.style-edit-link' : 'input', entry).click();
+  entry?.$(shiftKey ? '.style-edit-link' : 'input').click();
 }
 
 function getTogglables() {
@@ -68,7 +66,7 @@ function getTogglables() {
 function countEnabledTogglables() {
   let num = 0;
   for (const id of togglables) {
-    num += $(`#${id}`).classList.contains('enabled');
+    num += $id(id).classList.contains('enabled');
   }
   return num;
 }
@@ -84,15 +82,15 @@ function toggleState(list, match, enable) {
   const results = [];
   let task = Promise.resolve();
   for (let entry of list) {
-    entry = typeof entry === 'string' ? $('#' + entry) : entry;
-    if (!match && $('input', entry).checked !== enable || entry.classList.contains(match)) {
+    entry = typeof entry === 'string' ? $id(entry) : entry;
+    if (!match && entry.$('input').checked !== enable || entry.classList.contains(match)) {
       results.push(entry.id);
       task = task
         .then(() => API.styles.toggle(entry.styleId, enable))
         .then(() => {
           entry.classList.toggle('enabled', enable);
           entry.classList.toggle('disabled', !enable);
-          $('input', entry).checked = enable;
+          entry.$('input').checked = enable;
         });
     }
   }

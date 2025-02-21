@@ -1,23 +1,23 @@
-import {$, $$, $create, $remove, toggleDataset} from '/js/dom';
-import {messageBox, showSpinner} from '/js/dom-util';
-import {t} from '/js/localization';
-import {API, onExtension} from '/js/msg';
-import * as URLS from '/js/urls';
-import {isEmptyObj} from '/js/util';
+import {$create, $toggleDataset} from '@/js/dom';
+import {messageBox, showSpinner} from '@/js/dom-util';
+import {onMessage} from '@/js/msg';
+import {API} from '@/js/msg-api';
+import * as URLS from '@/js/urls';
+import {isEmptyObj, t} from '@/js/util';
 import editor from './editor';
 
 export default function USWIntegration() {
   const ERROR_TITLE = 'UserStyles.world ' + t('genericError');
   const META_KEYS = ['name', 'description', 'license', 'username>author', 'homepage', 'namespace'];
-  const elProgress = $('#usw-progress');
-  const UI = $('#publish');
-  const btnPublish = $('#usw-publish-style');
+  const elProgress = $id('usw-progress');
+  const UI = $id('publish');
+  const btnPublish = $id('usw-publish-style');
   const style = editor.style;
   let spinner;
   let spinnerTimer = 0;
   let prevCode = '';
 
-  onExtension(request => {
+  onMessage.set(request => {
     if (request.method === 'uswData' &&
         request.style.id === style.id) {
       Object.assign(style, request.style);
@@ -27,7 +27,7 @@ export default function USWIntegration() {
   });
 
   updateUI();
-  btnPublish.onclick = $('#usw-disconnect').onclick = onClick;
+  btnPublish.onclick = $id('usw-disconnect').onclick = onClick;
 
   async function publishStyle() {
     const {id, _usw} = style;
@@ -44,7 +44,7 @@ export default function USWIntegration() {
     const title = `${new Date().toLocaleString()}\n${res}`;
     const failed = error || /^Error:/.test(res);
     elProgress.append(...failed ? [
-      $create('a.error', {title, tabIndex: 0, 'data-cmd': 'note'}, res),
+      $create('a.error[data-cmd=note]', {title, tabIndex: 0}, res),
       _usw && _usw.token && $create('div', t('publishReconnect')),
     ].filter(Boolean) : [
       $create(`span.${isDiff ? 'success' : 'unchanged'}`, {title}),
@@ -59,10 +59,10 @@ export default function USWIntegration() {
 
   function updateUI() {
     const usw = style._usw || false;
-    const elUrl = $('#usw-url');
-    const elData = $('#usw-data');
-    const isOn = usw.token;
-    toggleDataset(UI, 'connected', isOn);
+    const elUrl = $id('usw-url');
+    const elData = $id('usw-data');
+    const isOn = !!usw.token;
+    $toggleDataset(UI, 'connected', isOn);
     UI.classList.toggle('ignore-pref', !isOn);
     if (!isOn) UI.open = false;
     elUrl.href = `${URLS.usw}${usw.id ? `style/${usw.id}` : ''}`;
@@ -74,7 +74,7 @@ export default function USWIntegration() {
       const [from, to = from] = key.split('>');
       const value = usw[from] || '';
       const id = 'usw-data-' + to;
-      let el = $('#' + id);
+      let el = $id(id);
       if (!el) {
         el = $create('input', {
           id,
@@ -82,10 +82,10 @@ export default function USWIntegration() {
           placeholder: key === 'name' ? style[key] : '',
         });
         el.on('input', onDataChanged);
-        elData.appendChild($create([
+        elData.appendChild($tag('div')).append(
           $create('label', {htmlFor: id}, '@' + to),
           el,
-        ]));
+        );
       }
       el.value = value;
       onDataChanged.call(el);
@@ -122,7 +122,7 @@ export default function USWIntegration() {
   }
 
   function timerOff() {
-    $remove(spinner);
+    spinner?.remove();
     clearTimeout(spinnerTimer);
     spinnerTimer = 0;
     spinner = null;

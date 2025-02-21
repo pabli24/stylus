@@ -1,7 +1,6 @@
-import {UCD} from '/js/consts';
-import {$} from '/js/dom';
-import {API} from '/js/msg';
-import * as prefs from '/js/prefs';
+import {UCD} from '@/js/consts';
+import {API} from '@/js/msg-api';
+import * as prefs from '@/js/prefs';
 import editor from './editor';
 
 const ID = 'editor.livePreview';
@@ -9,9 +8,11 @@ let errPos;
 let el;
 let data;
 let port;
-let enabled = prefs.get(ID);
+let enabled;
 
-prefs.subscribe(ID, (key, value) => {
+prefs.subscribe(ID, (key, value, init) => {
+  enabled = value;
+  if (init) return;
   if (!value) {
     if (port) {
       port.disconnect();
@@ -21,8 +22,7 @@ prefs.subscribe(ID, (key, value) => {
     createPreviewer();
     updatePreviewer(data);
   }
-  enabled = value;
-});
+}, true);
 
 editor.livePreview = newData => {
   if (!port) {
@@ -41,14 +41,14 @@ editor.livePreview = newData => {
 function createPreviewer() {
   port = chrome.runtime.connect({name: 'livePreview:' + editor.style.id});
   port.onDisconnect.addListener(() => (port = null));
-  el = $('#preview-errors');
+  el = $id('preview-errors');
   el.onclick = showError;
 }
 
 function showError() {
   if (errPos) {
     const cm = editor.getEditors()[0];
-    cm.setCursor(errPos);
+    cm.jumpToPos(errPos);
     cm.focus();
   }
 }
@@ -61,7 +61,7 @@ async function updatePreviewer(newData) {
     const ucd = newData[UCD];
     const pp = ucd && ucd.preprocessor;
     const shift = err._varLines + 1 || 0;
-    errPos = pp && err.line && err.column
+    errPos = pp && (err.line ??= err.lineno) && err.column
       ? {line: err.line - shift, ch: err.column - 1}
       : err.index;
     if (Array.isArray(err)) {
@@ -73,7 +73,9 @@ async function updatePreviewer(newData) {
     if (errPos >= 0) {
       // FIXME: this would fail if editors[0].getValue() !== data.sourceCode
       errPos = editor.getEditors()[0].posFromIndex(errPos);
-    } else if (pp === 'stylus' && (errPos = err.match(/^\w+:(\d+):(\d+)(?:\n.+)+\s+(.+)/))) {
+    } else if (!errPos && pp === 'stylus' && (
+      errPos = err.match(/^\w+:(\d+):(\d+)(?:\n.+)+\s+(.+)/)
+    )) {
       err = errPos[3];
       errPos = {line: errPos[1] - shift, ch: errPos[2] - 1};
     }

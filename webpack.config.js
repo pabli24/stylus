@@ -1,24 +1,24 @@
 'use strict';
 
 const fs = require('fs');
+const childProcess = require('child_process');
 const path = require('path');
 const webpack = require('webpack');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
+const HtmlWebpackProcessingPlugin = require('html-webpack-processing-plugin');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 const TerserPlugin = require('terser-webpack-plugin');
 const CopyPlugin = require('copy-webpack-plugin');
 const CssMinimizerPlugin = require('css-minimizer-webpack-plugin');
 const InlineConstantExportsPlugin = require('@automattic/webpack-inline-constant-exports-plugin');
 const {BundleAnalyzerPlugin} = require('webpack-bundle-analyzer');
-const RawEnvPlugin = require('./tools/raw-env-plugin');
-const WebpackPatchBootstrapPlugin = require('./tools/webpack-patch-bootstrap');
-const {escapeForRe, getManifestOvrName, stripSourceMap, MANIFEST, ROOT} = require('./tools/util');
+const {RawEnvPlugin} = require('./tools/wp-raw-patch-plugin');
+const {
+  escapeForRe, getManifestOvrName, transESM2var, transSourceMap,
+  BUILD, CHANNEL, DEV, MANIFEST, MV3, ROOT, ZIP, nukeHtmlSpaces,
+} = require('./tools/util');
 
-const NODE_ENV = process.env.NODE_ENV;
-const [TARGET, ZIP] = NODE_ENV?.split(':') || [''];
-const [BUILD, FLAVOR, CHANNEL] = TARGET.split('-');
-const DEV = BUILD === 'DEV' || process.env.npm_lifecycle_event?.startsWith('watch');
-const FS_CACHE = !DEV;
+const {DEBUG, GITHUB_ACTIONS} = process.env;
 const SRC = ROOT + 'src/';
 const DST = ROOT + 'dist/';
 const CSS = 'css/';
@@ -26,31 +26,30 @@ const JS = 'js/';
 const SHIM = ROOT + 'tools/shim/';
 const SEP_ESC = escapeForRe(path.sep);
 const SRC_ESC = escapeForRe(SRC.replaceAll('/', path.sep));
-const MV3 = FLAVOR === 'mv3';
 const PAGE_BG = MV3 ? 'background/sw' : 'background';
-const PAGE_OFFSCREEN = 'offscreen';
+const OFFSCREEN = 'offscreen';
 const PAGES = [
   'edit',
   'install-usercss',
   'manage',
   'options',
   'popup',
-  MV3 ? PAGE_OFFSCREEN : PAGE_BG,
-];
+  !MV3 && PAGE_BG,
+].filter(Boolean);
+const FS_CACHE = !DEV && !GITHUB_ACTIONS && process.env.STYLUS_FS_CACHE;
 const GET_CLIENT_DATA = 'get-client-data';
 const GET_CLIENT_DATA_TAG = {
   toString: () => `<script src="${JS}${GET_CLIENT_DATA}.js"></script>`,
 };
-const LIB_EXPORT_DEFAULT = {output: {library: {export: 'default'}}};
 const RESOLVE_VIA_SHIM = {
   modules: [
     SHIM,
     'node_modules',
   ],
 };
+const MAX_CHUNKNAME_LEN = 24; // in Windows, path+name is limited to 260 chars
 const CM_PATH = CSS + 'cm-themes/';
 const CM_PACKAGE_PATH = path.dirname(require.resolve('codemirror/package.json')) + path.sep;
-const CM_NATIVE_RE = /codemirror(?!-factory)/; // `factory` is our code
 const THEME_PATH = CM_PACKAGE_PATH.replaceAll('\\', '/') + '/theme';
 const THEME_NAMES = Object.fromEntries(fs.readdirSync(THEME_PATH)
   .sort()
@@ -64,38 +63,65 @@ const OUTPUT_MODULE = {
   },
   experiments: {outputModule: true},
 };
+const ALIASES = {
+  funcs: {
+    $: 'document.querySelector',
+    $$: 'document.querySelectorAll',
+    $id: 'document.getElementById',
+    $tag: 'document.createElement',
+  },
+  vars: {
+    document: 'global.document',
+    $root: 'document.documentElement',
+    $rootCL: '$root.classList',
+  },
+};
 const VARS = {
   API: 'API', // hiding the global from IDE
   BUILD,
   CLIENT_DATA: 'clientData', // hiding the global from IDE
   CM_PATH,
-  DEBUG: !!process.env.DEBUG,
   DEV,
   ENTRY: false,
   IS_BG: false,
   JS,
   MV3,
   PAGE_BG: PAGE_BG.split('/').pop(),
-  PAGE_OFFSCREEN,
   ZIP: !!ZIP,
 };
+const DEBUG_MODE = {
+  GENERAL: 1,
+  PORT: 2,
+  LIFE: 4,
+};
 const RAW_VARS = {
-  DEBUGLOG: (process.env.DEBUG ? '' : 'null&&') + 'console.log',
-  DEBUGWARN: (process.env.DEBUG ? '' : 'null&&') + 'console.warn',
+  DEBUG: DEBUG || '0',
+  DEBUGLOG: (DEBUG ? '' : 'null&&') + 'console.log',
+  DEBUGPORT: (+DEBUG & DEBUG_MODE.PORT ? '' : 'null&&') + 'console.log',
+  DEBUGTRACE: (DEBUG ? '' : 'null&&') + 'console.trace',
+  DEBUGWARN: (DEBUG ? '' : 'null&&') + 'console.warn',
   KEEP_ALIVE: '1&&',
 };
-const BANNER = '{const global = this, window = global;';
-const addWrapper = (banner = BANNER, footer = '}', test = /\.js$/) => [
+const INTRO = '"use strict"; { const global = self, window = global';
+const INTRO_ALIASES = [
+  ...Object.entries(ALIASES.vars).map(([k, v]) => `${k}=${v}`),
+  ...Object.entries(DEV ? ALIASES.funcs : []).map(([k, v]) => `${k}=${v}.bind(document)`),
+].join(', ');
+const addWrapper = (banner = INTRO + ';', footer = '}', test = /\.js$/) => [
   new webpack.BannerPlugin({raw: true, test, banner}),
   new webpack.BannerPlugin({raw: true, test, banner: footer, footer: true}),
 ];
-const TERSER_OPTS = {
+const getTerserOptions = (cm, ovr) => ({
+  [cm ? 'include' : 'exclude']: /node_modules|codemirror(?!-factory)/,
   extractComments: false,
   terserOptions: {
-    toplevel: true,
     ecma: MV3 ? 2024 : 2017,
     compress: {
-      passes: 2,
+      pure_getters: true,
+      global_defs: Object.entries(ALIASES.funcs).reduce((res, [key, val]) => {
+        res['@' + key] = val;
+        return res;
+      }, {}),
       reduce_funcs: false,
     },
     output: {
@@ -103,9 +129,19 @@ const TERSER_OPTS = {
       comments: false,
       wrap_func_args: false,
     },
+    ...ovr ?? {
+      mangle: !!cm || {
+        reserved: new Set(),
+        keep_classnames: true,
+      },
+    },
   },
-};
+});
+const tersers = {};
 
+/**
+ * @return {import('webpack/types').Configuration}
+ */
 const getBaseConfig = () => ({
   mode: DEV ? 'development' : 'production',
   devtool: DEV && 'inline-source-map',
@@ -127,50 +163,59 @@ const getBaseConfig = () => ({
   },
   // infrastructureLogging: {debug: /webpack\.cache/},
   module: {
+    parser: {
+      'javascript/auto': {node: false},
+      'javascript/esm': {node: false},
+    },
     rules: [
-      {
-        test: /\.css$/,
-        use: [
-          MiniCssExtractPlugin.loader,
-          {loader: 'css-loader', options: {importLoaders: 1}},
-          'postcss-loader',
-        ],
+      // calc plugin for clamp() is broken: https://github.com/postcss/postcss-calc/issues/123
+      ...((skip = 'js/dlg/config-dialog.css', use = [
+        MiniCssExtractPlugin.loader,
+        {loader: 'css-loader', options: {importLoaders: 1}},
+      ]) => [{
+        test: (skip = path.resolve(SRC + skip)),
+        use: [...use, 'postcss-loader'],
       }, {
+        test: /\.css$/,
+        exclude: [skip],
+        use: [...use, {loader: 'postcss-loader', options: {postcssOptions: mergeCfg({plugins: [
+          'postcss-calc',
+        ]}, require('./postcss.config'))}}],
+      }])(), {
         test: /\.(png|svg|jpe?g|gif|ttf)$/i,
         type: 'asset/resource',
-      }, {
+      }, !MV3 && {
         test: /\.m?js(\?.*)?$/,
-        exclude: [ROOT + 'node_modules/'],
+        exclude: [CM_PACKAGE_PATH], // speedup: excluding known ES5 or ES6 libraries
         loader: 'babel-loader',
         options: {root: ROOT},
         resolve: {fullySpecified: false},
       }, {
-        loader: SHIM + 'cjs-to-esm-loader.js',
-        test: [
+        loader: 'html-loader',
+        test: new RegExp(SRC_ESC + String.raw`.*[/\\].*\.html$`),
+        options: {
+          sources: false, // false = keep the source as-is
+          minimize: false, // false = use our preprocessor
+          preprocessor: nukeHtmlSpaces,
+        },
+      }, {
+        loader: './tools/wp-cjs-to-esm-loader.js',
+        test: new RegExp(`/node_modules/(${escapeForRe([
+          '@eight04/',
           'db-to-cloud',
           'webext-launch-web-auth-flow',
-        ].map(npm => path.dirname(require.resolve(npm))),
+        ].join('\n')).replaceAll('\n', '|')})`.replaceAll('/', SEP_ESC)),
       }, {
-        loader: SHIM + 'jsonlint-loader.js',
-        test: require.resolve('jsonlint'),
-      }, {
-        loader: SHIM + 'lzstring-loader.js',
+        loader: './tools/wp-lzstring-loader.js',
         test: require.resolve('lz-string-unsafe'),
       },
-    ],
+    ].filter(Boolean),
   },
-  node: false,
   optimization: {
     concatenateModules: true, // makes DEV code run faster
     chunkIds: false,
     mangleExports: false,
     minimizer: DEV ? [] : [
-      new TerserPlugin(mergeCfg({
-        exclude: CM_NATIVE_RE,
-        terserOptions: {
-          mangle: {keep_fnames: true},
-        },
-      }, TERSER_OPTS)),
       new CssMinimizerPlugin({
         minimizerOptions: {
           preset: ['default', {
@@ -179,11 +224,11 @@ const getBaseConfig = () => ({
           }],
         },
       }),
-    ],
+    ].filter(Boolean),
   },
   resolve: {
     alias: {
-      '/': SRC,
+      '@': SRC,
     },
     fallback: {
       'fs': SHIM + 'null.js',
@@ -200,13 +245,30 @@ const getBaseConfig = () => ({
     new RawEnvPlugin(VARS, RAW_VARS),
     new webpack.ids.NamedChunkIdsPlugin({context: SRC}),
     new InlineConstantExportsPlugin([/[/\\]consts\.js$/]),
-    new WebpackPatchBootstrapPlugin(),
   ],
   stats: {
     // optimizationBailout: true,
   },
 });
 
+function getChunkFileName({chunk}) {
+  let res = (chunk.name || chunk.id)
+    .replace(/(^|-)(css|js(_(color|dlg))?|vendor-overwrites_.+?_)|_js$/g, '')
+    .replace(/node_modules(.+?node_modules)?/g, '')
+    .replace(/^[-_]+|[-_]+$|(?<=[-_])[-_]+/g, '')
+    .replace(/[-_](css|js)(?=$|[-_])/g, '');
+  if (res.length > MAX_CHUNKNAME_LEN) {
+    res = res.slice(0, MAX_CHUNKNAME_LEN).replace(/[-_][a-z]{0,2}$/, '');
+  }
+  res = this[0] + res.replaceAll('_', '-') + this[1];
+  return res;
+}
+
+/**
+ * @param {import('webpack/types').Configuration} ovr
+ * @param {import('webpack/types').Configuration} [base]
+ * @return {import('webpack/types').Configuration}
+ */
 function mergeCfg(ovr, base) {
   if (!ovr) {
     return base;
@@ -233,8 +295,12 @@ function mergeCfg(ovr, base) {
         })
       );
     }
+    base = getBaseConfig();
+    if (!DEV && !ovr.optimization?.minimizer)
+      base.optimization.minimizer.push(tersers.own ??= new TerserPlugin(getTerserOptions()));
+  } else {
+    base = {...base};
   }
-  base = base ? {...base} : getBaseConfig();
   for (const k in ovr) {
     const o = ovr[k];
     const b = base[k];
@@ -246,28 +312,40 @@ function mergeCfg(ovr, base) {
 }
 
 function makeLibrary(entry, name, extras) {
-  return mergeCfg(extras, mergeCfg({
+  let cfg = mergeCfg({
     entry,
     output: {
       path: DST + JS,
-      library: {
+      library: name && {
         type: 'global',
-        name,
+        name: name?.replace(/^\W+/, ''),
+        export: name[0] === '*' ? undefined : 'default',
       },
     },
     plugins: name
       ? addWrapper()
-      : addWrapper(`(()=>${BANNER}`, '})()'),
-  }));
+      : addWrapper(INTRO + '; (()=>{', '})()}'),
+  });
+  if (!name) cfg = mergeCfg(OUTPUT_MODULE, cfg);
+  return extras ? mergeCfg(extras, cfg) : cfg;
 }
 
 function makeContentScript(name) {
+  // (!) `global` must be `this` because in Firefox it's not equal to `window` or `self`
+  const intro = `if (self["${name}"]!==1) { self["${name}"]=1; const global = this, ${
+    INTRO_ALIASES
+  }; (() => { "use strict"; `;
   return mergeCfg(OUTPUT_MODULE, mergeCfg({
-    entry: '/content/' + name,
+    entry: '@/content/' + name,
     output: {path: DST + JS},
-    plugins: addWrapper(
-      `window["${name}"]!==1 && (() => {const global = this; global["${name}"] = 1;`,
-      '})();'),
+    plugins: addWrapper(intro, '})()}'),
+    optimization: {
+      minimizer: DEV ? [] : [
+        // mangling vars/funcs improves performance by a fraction of millisecond,
+        // but on 1000 pages+frames it'll accumulate to a fraction of a second
+        new TerserPlugin(getTerserOptions(false, {mangle: true})),
+      ],
+    },
   }));
 }
 
@@ -282,21 +360,45 @@ function makeManifest(files) {
     else if (old && typeof old === 'object') Object.assign(old, val);
     else base[key] = val;
   }
-  if (CHANNEL === 'beta') base.name += ' (beta)';
+  let ver = base.version;
+  if (BUILD === 'firefox') {
+    base.options_ui = {
+      /*
+       * Linking to dashboard, not to options, because this is aimed at users who removed the icon
+       * from the toolbar (they rarely use Stylus) so they visit about:addons instead.
+       */
+      page: 'manage.html',
+      open_in_tab: true,
+    };
+  }
+  if (CHANNEL) {
+    base.name += ` (${CHANNEL})`;
+  }
+  if (MV3 && CHANNEL === 'beta' && parseInt(ver) === 2) {
+    ver = base.version = 3 + ver.slice(1);
+  }
+  if (MV3 && (DEBUG || DEV)) {
+    base.permissions.push('declarativeNetRequestFeedback');
+  }
+  if (GITHUB_ACTIONS) {
+    delete base.key;
+    childProcess.execSync(`echo "_VER=${ver}" >> $GITHUB_ENV`);
+  }
   return JSON.stringify(base, null, 2);
 }
 
 module.exports = [
 
   mergeCfg({
-    entry: Object.fromEntries(PAGES.map(p => [p, `/${p}`])),
+    entry: Object.fromEntries(PAGES.map(p => [p, `@/${p}`])),
     output: {
       filename: JS + '[name].js',
-      chunkFilename: JS + '[name].js',
+      chunkFilename: getChunkFileName.bind([JS, '.js']),
     },
     optimization: {
       minimizer: DEV ? [] : [
-        new TerserPlugin({...TERSER_OPTS, include: CM_NATIVE_RE}),
+        tersers.cm ??= new TerserPlugin(getTerserOptions(true)),
+        tersers.own ??= new TerserPlugin(getTerserOptions()),
       ],
       runtimeChunk: {
         name: 'common',
@@ -307,7 +409,7 @@ module.exports = [
           codemirror: {
             test: new RegExp([
               SRC_ESC + 'cm' + SEP_ESC,
-              CM_NATIVE_RE.source,
+              'codemirror(?!-factory)', // `factory` is our code
             ].join('|')),
             name: 'codemirror',
             enforce: true,
@@ -315,8 +417,10 @@ module.exports = [
           ...Object.fromEntries([
             [2, 'common-ui', `^${SRC_ESC}(content/|js/(dom|header|localization|themer))`],
             [1, 'common', `^${SRC_ESC}js/|/lz-string(-unsafe)?/`],
+            [-10, 'vendors', /node_modules/],
           ].map(([priority, name, test]) => [name, {
-            test: new RegExp(String.raw`(${test.replaceAll('/', SEP_ESC)})[^./\\]*\.js$`),
+            test: test instanceof RegExp ? test :
+              new RegExp(String.raw`(${test.replaceAll('/', SEP_ESC)})[^./\\]*\.js$`),
             name,
             priority,
           }])),
@@ -330,20 +434,21 @@ module.exports = [
       }, {
         IS_BG: MV3 ? 'false' : '(global._bg === true)',
       }),
-      ...addWrapper(),
+      ...addWrapper(INTRO + ', ' + INTRO_ALIASES + ';'),
       new MiniCssExtractPlugin({
-        filename: CSS + '[name].css',
-        chunkFilename: CSS + '[name].css',
+        filename: getChunkFileName.bind([CSS, '.css']),
+        chunkFilename: getChunkFileName.bind([CSS, '.css']),
       }),
       ...PAGES.map(p => new HtmlWebpackPlugin({
         chunks: [p],
         filename: p + '.html',
-        template: SRC + p + '/index.html',
+        minify: true, // to see possible whitespace elimination problems in dev build
+        template: SRC + p + '.html',
         templateParameters: (compilation, files, tags, options) => {
           const {bodyTags, headTags} = tags;
           // The main entry goes into BODY to improve performance (2x in manage.html)
           headTags.push(...bodyTags.splice(0, bodyTags.length - 1));
-          if (MV3 && p !== PAGE_OFFSCREEN) headTags.unshift(GET_CLIENT_DATA_TAG);
+          if (MV3) headTags.unshift(GET_CLIENT_DATA_TAG);
           return {
             compilation: compilation,
             webpackConfig: compilation.options,
@@ -352,63 +457,84 @@ module.exports = [
         },
         scriptLoading: 'blocking',
         inject: false,
+        postProcessing: nukeHtmlSpaces,
       })),
+      new HtmlWebpackProcessingPlugin(),
       new CopyPlugin({
         patterns: [
           {context: SRC, from: 'icon/**', to: DST},
-          {context: SRC + 'content', from: 'install*.js', to: DST + JS, info: {minimized: true}},
+          {context: SRC + 'content', from: 'install*.js', to: DST + JS},
           {context: SRC, from: getManifestOvrName(MV3, true), to: MANIFEST,
             transformAll: makeManifest},
           {context: SRC, from: '_locales/**', to: DST},
           {context: THEME_PATH, from: '*.css', to: DST + CM_PATH},
           ...[
+            ['csslint-mod/dist/csslint.js', 'csslint.js', true],
+            ['csslint-mod/dist/parserlib.js', 'parserlib.js', true],
             ['stylelint-bundle', 'stylelint.js'],
             ['less/dist/less.min.js', 'less.js'],
             ['stylus-lang-bundle/dist/stylus-renderer.min.js', 'stylus-lang.js'],
-          ].map(([npm, to]) => ({
+          ].map(([npm, to, babelize]) => ({
             from: require.resolve(npm),
             to: DST + JS + to,
-            info: {minimized: true},
-            transform: stripSourceMap,
+            info: {minimized: !babelize},
+            transform: babelize ? transESM2var : transSourceMap,
           })),
         ],
       }),
-      !DEV && new webpack.ProgressPlugin(),
+      new webpack.ProgressPlugin(),
     ].filter(Boolean),
     resolve: RESOLVE_VIA_SHIM,
   }),
 
-  ...!MV3 ? [] : [
-    mergeCfg({
-      entry: `/${PAGE_BG}`,
-      plugins: [
-        new RawEnvPlugin({
-          ENTRY: 'sw',
-          IS_BG: true,
-        }, {
-          KEEP_ALIVE: 'global.keepAlive',
-        }),
-        ...addWrapper(),
-      ],
-      resolve: RESOLVE_VIA_SHIM,
-    }),
-    mergeCfg(OUTPUT_MODULE, mergeCfg({
-      entry: '/js/' + GET_CLIENT_DATA,
-      output: {path: DST + JS},
-    })),
-    makeLibrary('db-to-cloud/lib/drive/webdav', 'webdav', LIB_EXPORT_DEFAULT),
-  ],
+  MV3 && mergeCfg({
+    entry: `@/${PAGE_BG}`,
+    plugins: [
+      new RawEnvPlugin({
+        ENTRY: 'sw',
+        IS_BG: true,
+      }, {
+        KEEP_ALIVE: 'global.keepAlive',
+      }),
+      ...addWrapper(),
+    ],
+    resolve: RESOLVE_VIA_SHIM,
+  }),
+
+  MV3 && mergeCfg({
+    entry: `@/${OFFSCREEN}`,
+    output: {
+      filename: JS + '[name].js',
+    },
+    plugins: [
+      new RawEnvPlugin({ENTRY: OFFSCREEN}),
+      ...addWrapper(INTRO + ', ' + INTRO_ALIASES + ';'),
+      new HtmlWebpackPlugin({
+        chunks: [OFFSCREEN],
+        filename: OFFSCREEN + '.html',
+        template: SRC + OFFSCREEN + '.html',
+        scriptLoading: 'blocking',
+        inject: false,
+      }),
+    ],
+    resolve: RESOLVE_VIA_SHIM,
+  }),
+
+  MV3 && mergeCfg(OUTPUT_MODULE, mergeCfg({
+    entry: '@/js/' + GET_CLIENT_DATA,
+    output: {path: DST + JS},
+  })),
+
+  MV3 && makeLibrary('db-to-cloud/lib/drive/webdav', 'webdav'),
 
   makeContentScript('apply.js'),
-  makeLibrary('/js/worker.js', undefined, {
-    ...OUTPUT_MODULE,
+  makeLibrary('@/js/worker.js', undefined, {
     plugins: [new RawEnvPlugin({ENTRY: 'worker'})],
   }),
-  makeLibrary('/js/color/color-converter.js', 'colorConverter'),
-  makeLibrary('/js/csslint/csslint.js', 'CSSLint',
-    {...LIB_EXPORT_DEFAULT, externals: {'./parserlib': 'parserlib'}}),
-  makeLibrary('/js/csslint/parserlib.js', 'parserlib', LIB_EXPORT_DEFAULT),
-  makeLibrary('/js/meta-parser.js', 'metaParser', LIB_EXPORT_DEFAULT),
-  makeLibrary('/js/moz-parser.js', 'extractSections', LIB_EXPORT_DEFAULT),
-  makeLibrary('/js/usercss-compiler.js', 'compileUsercss', LIB_EXPORT_DEFAULT),
+  makeLibrary('@/js/color/color-converter.js', '*:colorConverter'),
+  makeLibrary('@/js/meta-parser.js', 'metaParser'),
+  makeLibrary('@/js/moz-parser.js', 'extractSections'),
+  makeLibrary('@/js/usercss-compiler.js', 'compileUsercss'),
 ].filter(Boolean);
+
+module.exports.parallelism = 2;

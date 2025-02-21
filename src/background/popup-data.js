@@ -1,22 +1,28 @@
-import '/js/browser';
-import {kAboutBlank, kPopup} from '/js/consts';
-import {API} from '/js/msg';
-import {CHROME, FIREFOX} from '/js/ua';
-import {chromeProtectsNTP, ownRoot, supported} from '/js/urls';
-import {getActiveTab} from '/js/util-webext';
+import '@/js/browser';
+import {kAboutBlank, kPopup, kStyleIds, kUrl} from '@/js/consts';
+import {CHROME, FIREFOX} from '@/js/ua';
+import {chromeProtectsNTP, ownRoot, supported} from '@/js/urls';
+import {getActiveTab} from '@/js/util-webext';
 import {pingTab} from './broadcast';
+import {bgBusy} from './common';
 import reinjectContentScripts from './content-scripts';
-import * as tabMan from './tab-manager';
+import {getByUrl} from './style-manager';
+import tabCache, * as tabMan from './tab-manager';
+import {waitForTabUrl} from './tab-util';
 
 export default async function makePopupData() {
   let tab = await getActiveTab();
   if (FIREFOX && tab.status === 'loading' && tab.url === kAboutBlank) {
-    tab = await API.waitForTabUrl(tab.id);
+    tab = await waitForTabUrl(tab.id);
   }
-  let url = tab.pendingUrl || tab.url || ''; // new Chrome uses pendingUrl while connecting
+  // In modern Chrome `url` is for the current tab's contents, so it may be undefined
+  // when a newly created tab is still connecting to `pendingUrl`.
+  let url = tab.url || tab.pendingUrl || '';
+  let tmp;
+  const td = tabCache[tab.id];
   const isOwn = url.startsWith(ownRoot);
   const [
-    ping0 = __.MV3 && !tabMan.get(tab.id, kPopup) && (
+    ping0 = __.MV3 && !td?.[kPopup] && (
       tabMan.set(tab.id, kPopup, true),
       await reinjectContentScripts(tab)
     ),
@@ -31,6 +37,19 @@ export default async function makePopupData() {
   const unknown = new Map(frames.map(f => [f.frameId, f]));
   const known = new Map();
   const urls = new Set([kAboutBlank]);
+  if (td && (tmp = td[kStyleIds])) {
+    for (let id in tmp) {
+      if (!unknown.has(id = +id)) { // chrome bug: getAllFrames misses some frames
+        const frameUrl = td[kUrl][id];
+        unknown.set(id, {
+          frameId: id,
+          parentFrameId: 0,
+          styles: getByUrl(frameUrl),
+          url: frameUrl,
+        });
+      }
+    }
+  }
   known.set(0, unknown.get(0) || {frameId: 0, url: ''});
   unknown.delete(0);
   let lastSize = 0;
@@ -48,7 +67,7 @@ export default async function makePopupData() {
   for (const sortedFrames of [known, unknown]) {
     for (const f of sortedFrames.values()) {
       const u = f.url ??= '';
-      f.isDupe = urls.has(u);
+      f.isDupe = f.frameId && urls.has(u);
       urls.add(u);
       frames.push(f);
     }
@@ -60,16 +79,10 @@ export default async function makePopupData() {
   frames[0].url = url;
   const urlSupported = supported(url);
   if (urlSupported) {
-    if (__.IS_BG && window._busy) {
-      await window._busy;
-    }
-    let styles = [];
+    if (bgBusy) await bgBusy;
     for (const f of frames) {
-      if (f.url && !f.isDupe) f.stylesIdx = styles.push(f.styles = API.styles.getByUrl(f.url)) - 1;
-    }
-    if (!__.IS_BG) {
-      styles = await Promise.all(styles);
-      for (const f of frames) if (f.styles) f.styles = styles[f.stylesIdx];
+      if (f.url && !f.isDupe)
+        f.styles ??= getByUrl(f.url);
     }
   }
   return [frames, ping0, tab, urlSupported];

@@ -2,6 +2,15 @@
    This file is loaded dynamically when the inline search is invoked.
    So don't put main popup's stuff here. */
 
+.search-results-shown {
+  body {
+    overflow-y: auto;
+  }
+  #installed-wrapper, #main-actions, #popup-options {
+    flex-shrink: 0;
+  }
+}
+
 #pct {
   --h: var(--outer-padding);
   font-size: var(--h);
@@ -38,11 +47,14 @@
 }
 
 #search-results-error {
-  background-color: rgba(255, 0, 0, 0.4);
+  color: #fff;
+  background-color: var(--red1);
   font-weight: bold;
   padding: 5px;
   text-align: center;
-  margin: 0 0 var(--outer-padding);
+  + :not([hidden]) {
+    margin-top: var(--outer-padding);
+  }
 }
 
 #search-results-list {
@@ -101,7 +113,7 @@
     margin: -6px 4px -6px 0;
   }
   & span {
-    font-size: 12px;
+    font-size: var(--font-size);
     font-weight: 600;
   }
   .search-result:hover & {

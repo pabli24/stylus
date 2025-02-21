@@ -1,20 +1,22 @@
-import {CodeMirror, extraKeys} from '/cm';
-import {UCD} from '/js/consts';
-import {$, $create, $remove} from '/js/dom';
-import {messageBox} from '/js/dom-util';
-import {t, template} from '/js/localization';
-import {API} from '/js/msg';
-import * as prefs from '/js/prefs';
-import {styleSectionsEqual, styleToCss} from '/js/sections-util';
-import {clipString, RX_META, sleep} from '/js/util';
+import {CodeMirror, extraKeys} from '@/cm';
+import {kCodeMirror, UCD} from '@/js/consts';
+import {$create} from '@/js/dom';
+import {messageBox} from '@/js/dom-util';
+import {htmlToTemplateCache, templateCache} from '@/js/localization';
+import {API} from '@/js/msg-api';
+import * as prefs from '@/js/prefs';
+import {styleSectionsEqual, styleToCss} from '@/js/sections-util';
+import {clipString, RX_META, sleep, t} from '@/js/util';
 import editor from './editor';
 import * as linterMan from './linter';
 import EditorSection from './sections-editor-section';
-import {helpPopup, rerouteHotkeys, showCodeMirrorPopup} from './util';
+import {helpPopup, rerouteHotkeys, showCodeMirrorPopup, worker} from './util';
+import html from './sections-editor.html';
 
 export default function SectionsEditor() {
+  htmlToTemplateCache(html);
   const {style, /** @type DirtyReporter */dirty} = editor;
-  const container = $('#sections');
+  const container = $id('sections');
   /** @type {EditorSection[]} */
   const sections = [];
   const xo = new IntersectionObserver(refreshOnViewListener, {rootMargin: '100%'});
@@ -27,9 +29,9 @@ export default function SectionsEditor() {
 
   updateMeta();
   rerouteHotkeys.toggle(true); // enabled initially because we don't always focus a CodeMirror
-  $('#to-mozilla').on('click', showMozillaFormat);
-  $('#to-mozilla-help').on('click', showToMozillaHelp);
-  $('#from-mozilla').on('click', () => showMozillaFormatImport());
+  $id('to-mozilla').on('click', showMozillaFormat);
+  $id('to-mozilla-help').on('click', showToMozillaHelp);
+  $id('from-mozilla').on('click', () => showMozillaFormatImport());
   document.on('wheel', scrollEntirePageOnCtrlShift, {passive: false});
   extraKeys['Shift-Ctrl-Wheel'] = 'scrollWindow';
   prefs.subscribe('editor.arrowKeysTraverse', (_, val) => {
@@ -51,7 +53,7 @@ export default function SectionsEditor() {
     updateLivePreview,
     updateMeta,
 
-    getCurrentLinter: () => prefs.get('editor.linter'),
+    getCurrentLinter: () => prefs.__values['editor.linter'],
 
     getEditors() {
       return sections.filter(s => !s.removed).map(s => s.cm);
@@ -121,7 +123,7 @@ export default function SectionsEditor() {
 
     async saveImpl() {
       try {
-        if (!$('#name').reportValidity()) throw t('styleMissingName');
+        if (!$id('name').reportValidity()) throw t('styleMissingName');
         const res = await API.styles.editSave(getModel());
         dirty.clear(); // cleaning only after saving has succeeded
         editor.useSavedStyle(res);
@@ -192,7 +194,7 @@ export default function SectionsEditor() {
   }
 
   function setGlobalProgress(done, total) {
-    const progressElement = $('#global-progress') ||
+    const progressElement = $id('global-progress') ||
       total && document.body.appendChild($create('#global-progress'));
     if (total) {
       const progress = (done / Math.max(done, total) * 100).toFixed(1);
@@ -201,7 +203,7 @@ export default function SectionsEditor() {
         progressElement.title = progress + '%';
       });
     } else {
-      $remove(progressElement);
+      progressElement.remove();
     }
   }
 
@@ -296,8 +298,8 @@ export default function SectionsEditor() {
   function getAssociatedEditor(nearbyElement) {
     for (let el = nearbyElement; el; el = el.parentElement) {
       // added by EditorSection
-      if (el.CodeMirror) {
-        return el.CodeMirror;
+      if (el[kCodeMirror]) {
+        return el[kCodeMirror];
       }
     }
   }
@@ -316,7 +318,7 @@ export default function SectionsEditor() {
       return;
     }
     let pos;
-    let cm = this.CodeMirror;
+    let cm = this[kCodeMirror];
     const {line, ch} = cm.getCursor();
     if (event.key === 'ArrowUp') {
       cm = line === 0 && editor.prevEditor(cm, true);
@@ -368,8 +370,10 @@ export default function SectionsEditor() {
   }
 
   function showMozillaFormat() {
-    const popup = showCodeMirrorPopup(t('styleToMozillaFormatTitle'), '', {readOnly: true});
-    popup.codebox.setValue(editor.getValue());
+    const popup = showCodeMirrorPopup(t('styleToMozillaFormatTitle'), '', {
+      readOnly: true,
+      value: editor.getValue(),
+    });
     popup.codebox.execCommand('selectAll');
   }
 
@@ -417,7 +421,7 @@ export default function SectionsEditor() {
               t('importPreprocessor'), 'pre-line',
               t('importPreprocessorTitle'))
         ) {
-          const {sections: newSections, errors} = await API.worker.parseMozFormat({code});
+          const {sections: newSections, errors} = await worker.parseMozFormat({code});
           if (!newSections.length || errors.some(e => !e.recoverable)) {
             await Promise.reject(errors);
           }
@@ -441,7 +445,7 @@ export default function SectionsEditor() {
     }
 
     function lockPageUI(locked) {
-      $.root.style.pointerEvents = locked ? 'none' : '';
+      $root.style.pointerEvents = locked ? 'none' : '';
       if (popup.codebox) {
         popup.classList.toggle('ready', locked ? false : !popup.codebox.isBlank());
         popup.codebox.options.readOnly = locked;
@@ -479,9 +483,9 @@ export default function SectionsEditor() {
   }
 
   function updateMeta() {
-    $('#name').value = style.customName || style.name || '';
-    $('#enabled').checked = style.enabled !== false;
-    $('#url').href = style.url || '';
+    $id('name').value = style.customName || style.name || '';
+    $id('enabled').checked = style.enabled !== false;
+    $id('url').href = style.url || '';
     editor.updateName();
   }
 
@@ -556,8 +560,8 @@ export default function SectionsEditor() {
                    '-'.repeat(20) + '\n' +
                    lines.slice(0, MAX_LINES).map(s => clipString(s, 100)).join('\n') +
                    (lines.length > MAX_LINES ? '\n...' : '');
-      const del = section.elDel = template.deletedSection.cloneNode(true);
-      $('button', del).onclick = () => restoreSection(section);
+      const del = section.elDel = templateCache.deletedSection.cloneNode(true);
+      del.$('button').onclick = () => restoreSection(section);
       del.title = title;
       section.el.prepend(del);
       section.remove();
@@ -640,11 +644,11 @@ export default function SectionsEditor() {
   /** @param {EditorSection} section */
   function registerEvents(section) {
     const {el, cm} = section;
-    $('.remove-section', el).onclick = () => removeSection(section);
-    $('.add-section', el).onclick = () => insertSectionAfter(undefined, section);
-    $('.clone-section', el).onclick = () => insertSectionAfter(section.getModel(), section);
-    $('.move-section-up', el).onclick = () => moveSectionUp(section);
-    $('.move-section-down', el).onclick = () => moveSectionDown(section);
+    el.$('.remove-section').onclick = () => removeSection(section);
+    el.$('.add-section').onclick = () => insertSectionAfter(undefined, section);
+    el.$('.clone-section').onclick = () => insertSectionAfter(section.getModel(), section);
+    el.$('.move-section-up').onclick = () => moveSectionUp(section);
+    el.$('.move-section-down').onclick = () => moveSectionDown(section);
     cm.on('paste', maybeImportOnPaste);
   }
 
@@ -676,7 +680,7 @@ export default function SectionsEditor() {
       const r = e.intersectionRatio && e.intersectionRect;
       if (r) {
         xo.unobserve(e.target);
-        const cm = e.target.CodeMirror;
+        const cm = e.target[kCodeMirror];
         if (r.bottom > 0 && r.top < window.innerHeight) {
           refreshOnViewNow(cm);
         } else {

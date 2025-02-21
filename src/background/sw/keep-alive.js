@@ -1,4 +1,5 @@
-import * as prefs from '/js/prefs';
+import {pKeepAlive} from '@/js/consts';
+import * as prefs from '@/js/prefs';
 import {bgBusy} from '../common';
 
 /** @type {?Promise[]} */
@@ -10,14 +11,16 @@ let TTL;
 /** seconds */
 let idleDuration;
 
+keepAlive(bgBusy);
 __.KEEP_ALIVE = keepAlive;
-prefs.subscribe('keepAlive', (_, val) => {
+prefs.subscribe(pKeepAlive, (_, val) => {
   idleDuration = Math.max(30, val * 60 | 0/*to integer*/ || 0/*if val is not a number*/);
   TTL = val * 60e3;
   if (!pulse || !TTL && !busy) reschedule();
 }, true);
 
 function keepAlive(job) {
+  if (__.DEBUG & 4) console.trace('%ckeepAlive', 'font-weight:bold', job);
   if (!(job instanceof Promise)) lastBusyTime = performance.now();
   else if (!busy) keepAliveUntilSettled([job]);
   else busy.push(job);
@@ -32,6 +35,7 @@ async function keepAliveUntilSettled(promises) {
   while (busy?.splice(0, promises.length) && busy.length);
   busy = null;
   lastBusyTime = performance.now();
+  if (__.DEBUG & 4) console.log('%ckeepAlive settled', 'font-weight:bold');
 }
 
 /**
@@ -46,8 +50,10 @@ async function reschedule() {
     ? isUserActiveInBrowser(true) // not awaiting as we don't need the result
     : TTL && performance.now() < lastBusyTime + TTL
       && await isUserActiveInBrowser(prefs.__values.keepAliveIdle)) {
+    if (__.DEBUG & 4) console.log('keepAlive setInterval', pulse || 'set');
     pulse ??= setInterval(reschedule, 25e3);
   } else if (pulse) {
+    if (__.DEBUG & 4) console.log('keepAlive setInterval cleared');
     clearInterval(pulse);
     pulse = null;
   }

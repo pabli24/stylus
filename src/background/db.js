@@ -1,8 +1,9 @@
-import {API} from '/js/msg';
-import {STORAGE_KEY} from '/js/prefs';
-import {chromeLocal} from '/js/storage-util';
-import {CHROME} from '/js/ua';
-import {deepCopy} from '/js/util';
+import {CACHE_DB, DB, kContentType, kInjectionOrder, STATE_DB, UCD} from '@/js/consts';
+import {API} from '@/js/msg-api';
+import {STORAGE_KEY} from '@/js/prefs';
+import {chromeLocal} from '@/js/storage-util';
+import {CHROME} from '@/js/ua';
+import {deepMerge, sleep} from '@/js/util';
 import ChromeStorageDB from './db-chrome-storage';
 
 /*
@@ -15,57 +16,73 @@ import ChromeStorageDB from './db-chrome-storage';
 let exec = __.BUILD === 'chrome' || CHROME
   ? dbExecIndexedDB
   : tryUsingIndexedDB;
-const DB = 'stylish';
 const FALLBACK = 'dbInChromeStorage';
 const REASON = FALLBACK + 'Reason';
-const CACHING = {};
+const DRAFTS_DB = 'drafts';
+const CACHING = {
+  [DRAFTS_DB]: cachedExec,
+  [STORAGE_KEY]: cachedExec,
+};
+const {CompressionStream} = global;
+const kApplicationGzip = 'application/gzip';
+const MIRROR_INIT = CompressionStream && {headers: {[kContentType]: kApplicationGzip}};
+const MIRROR_PREFIX = 'http://_/';
+/** @type {{[id: string]: Cache}} */
+const MIRROR = {
+  [DB]: null,
+  [STORAGE_KEY]: null,
+};
 const DATA_KEY = {};
 const STORES = {};
 const VERSIONS = {};
 const dataCache = {};
 const proxies = {};
 const databases = {};
+const chromeBases = {};
 const proxyHandler = {
-  get: ({dbName}, cmd) => (CACHING[dbName] ? cachedExec : exec).bind(null, dbName, cmd),
+  get: ({dbName}, cmd) => (CACHING[dbName] || exec).bind(null, dbName, cmd),
 };
 /**
  * @param {string} dbName
  * @param {object} [cfg]
- * @param {boolean} [cfg.cache]
  * @param {boolean|string} [cfg.id] - object's prop to be used as a db key
  * @param {string} [cfg.store]
  * @return {IDBObjectStoreMany}
  */
-export const getDbProxy = (dbName, {
-  cache,
+const getDbProxy = (dbName, {
   id,
   store = 'data',
   ver = 2,
 } = {}) => (proxies[dbName] ??= (
-  (CACHING[dbName] = cache),
   (DATA_KEY[dbName] = !id || typeof id === 'string' ? id : 'id'),
   (STORES[dbName] = store),
   (VERSIONS[dbName] = ver),
   new Proxy({dbName}, proxyHandler)
 ));
 
+/** @type {IDBObjectStoreMany} */
+export const cacheDB = __.MV3 && getDbProxy(CACHE_DB, {id: 'url'});
 export const db = getDbProxy(DB, {id: true, store: 'styles'});
+export const draftsDB = getDbProxy(DRAFTS_DB);
+/** Storage for big items that may exceed 8kB limit of chrome.storage.sync.
+ * To make an item syncable register it with uuidIndex.addCustom. */
+export const prefsDB = getDbProxy(STORAGE_KEY);
+/** @type {IDBObjectStoreMany} */
+export const stateDB = __.MV3 && getDbProxy(STATE_DB, {store: 'kv'});
 
 Object.assign(API, /** @namespace API */ {
-  drafts: getDbProxy('drafts', {cache: true}),
-  /** Storage for big items that may exceed 8kB limit of chrome.storage.sync.
-   * To make an item syncable register it with uuidIndex.addCustom. */
-  prefsDb: getDbProxy(STORAGE_KEY, {cache: true}),
+  draftsDB,
+  prefsDB,
 });
 
 async function cachedExec(dbName, cmd, a, b) {
-  const hub = dataCache[dbName] || (dataCache[dbName] = {});
+  const hub = dataCache[dbName] ??= {};
   const res = cmd === 'get' && a in hub ? hub[a] : await exec(...arguments);
   if (cmd === 'get') {
-    hub[a] = deepCopy(res);
+    hub[a] = deepMerge(res);
   } else if (cmd === 'put') {
     const key = DATA_KEY[dbName];
-    hub[key ? a[key] : b] = deepCopy(a);
+    hub[key ? a[key] : b] = deepMerge(a);
   } else if (cmd === 'delete') {
     delete hub[a];
   }
@@ -110,7 +127,7 @@ async function testDB() {
   await dbExecIndexedDB(DB, 'delete', e.id); // throws if `e` or id is null
 }
 
-async function useChromeStorage(err) {
+function useChromeStorage(err) {
   if (err) {
     chromeLocal.set({
       [FALLBACK]: true,
@@ -118,22 +135,20 @@ async function useChromeStorage(err) {
     });
     console.warn('Failed to access IndexedDB. Switched to extension storage API.', err);
   }
-  const BASES = {};
-  return (dbName, method, ...args) => (
-    BASES[dbName] || (
-      BASES[dbName] = ChromeStorageDB(dbName !== DB && `${dbName}-`)
-    )
-  )[method](...args);
+  return (dbName, method, ...args) =>
+    (chromeBases[dbName] ??= new ChromeStorageDB(dbName))[method](...args);
 }
 
 async function dbExecIndexedDB(dbName, method, ...args) {
-  const mode = method.startsWith('get') ? 'readonly' : 'readwrite';
+  const mode = method.startsWith('get') ? undefined : 'readwrite';
   const storeName = STORES[dbName];
   const store = (databases[dbName] ??= await open(dbName))
     .transaction([storeName], mode)
     .objectStore(storeName);
+  if (mode && dbName in MIRROR)
+    execMirror(...arguments);
   return method.endsWith('Many')
-    ? storeMany(store, method.slice(0, -4), args[0])
+    ? storeMany(store, method.slice(0, -4), ...args)
     : new Promise((resolve, reject) => {
       /** @type {IDBRequest} */
       const request = store[method](...args);
@@ -142,7 +157,7 @@ async function dbExecIndexedDB(dbName, method, ...args) {
     });
 }
 
-function storeMany(store, method, items) {
+function storeMany(store, method, items, keys) {
   let num = 0;
   let resolve, reject;
   const p = new Promise((ok, ko) => {
@@ -155,9 +170,9 @@ function storeMany(store, method, items) {
     results[req.i] = req.result;
     if (!--num) resolve(results);
   };
-  for (const item of items) {
+  while (num < items.length) {
     /** @type {IDBRequest} */
-    const req = store[method](item);
+    const req = store[method](items[num], keys?.[num]);
     req.onerror = reject;
     req.onsuccess = onsuccess;
     req.i = num;
@@ -196,4 +211,54 @@ function create(event) {
     } : undefined);
   }
   return idb;
+}
+
+export async function execMirror(dbName, method, a, b) {
+  const mirror = MIRROR[dbName] ??= await caches.open(dbName);
+  switch (method) {
+    case 'delete':
+      return mirror.delete(MIRROR_PREFIX + a);
+    case 'get':
+      b = await execMirror(dbName, 'getAll', a);
+      return b[0];
+    case 'getAll':
+      a = await mirror.matchAll(a);
+      for (let i = 0; i < a.length; i++) {
+        b = a[i];
+        if (MIRROR_INIT && b.headers.get(kContentType) === kApplicationGzip)
+          b = new Response(b.body.pipeThrough(new DecompressionStream('gzip')));
+        a[i] = b.text();
+      }
+      a = await Promise.all(a);
+      for (let i = 0; i < a.length; i++)
+        a[i] = JSON.parse(a[i]);
+      return a;
+    case 'put':
+      await sleep(10);
+      if (dbName === DB && a[UCD])
+        delete (a = {...a}).sections;
+      b = MIRROR_PREFIX + (b ?? a.id);
+      a = JSON.stringify(a);
+      if (MIRROR_INIT)
+        MIRROR_INIT.headers['Content-Length'] = a.length;
+      if (CompressionStream)
+        a = new Response(a).body.pipeThrough(new CompressionStream('gzip'));
+      return mirror.put(b, new Response(a, MIRROR_INIT));
+    case 'putMany':
+      for (let i = 0; i < a.length; i++)
+        await execMirror(dbName, 'put', a[i], b?.[i]);
+  }
+}
+
+export async function mirrorStorage(dataMap) {
+  if (!await caches.has(DB)) {
+    for (const {style} of dataMap.values())
+      await execMirror(DB, 'put', style);
+  }
+  if (!await caches.has(STORAGE_KEY)) {
+    for (const key of [kInjectionOrder]) {
+      const val = await prefsDB.get(key);
+      if (val) await execMirror(STORAGE_KEY, 'put', val, key);
+    }
+  }
 }
